@@ -12,6 +12,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as rclone$0 from "./internal/rclone/models.js";
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
 /**
@@ -29,6 +33,20 @@ export function Mount(name: string): $CancellablePromise<void> {
 }
 
 /**
+ * OpenFolder 在系统文件管理器中打开已连接驱动器对应的挂载目录。
+ */
+export function OpenFolder(name: string): $CancellablePromise<void> {
+    return $Call.ByID(2933356164, name);
+}
+
+/**
+ * Speeds 返回各已挂载驱动器的实时速率（上下行，字节/秒）。
+ */
+export function Speeds(): $CancellablePromise<{ [_ in string]?: rclone$0.Speed } | null> {
+    return $Call.ByID(634224896);
+}
+
+/**
  * Status 返回指定远程存储的挂载状态与最近日志。
  */
 export function Status(name: string): $CancellablePromise<$models.MountStatus> {
@@ -40,4 +58,11 @@ export function Status(name: string): $CancellablePromise<$models.MountStatus> {
  */
 export function Unmount(name: string): $CancellablePromise<void> {
     return $Call.ByID(1833232356, name);
+}
+
+/**
+ * Usages 返回各已挂载驱动器的容量信息（后端不支持的不会出现在结果里）。
+ */
+export function Usages(): $CancellablePromise<{ [_ in string]?: rclone$0.Usage } | null> {
+    return $Call.ByID(1447047892);
 }

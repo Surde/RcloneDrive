@@ -16,8 +16,11 @@ export {
 
 export type {
     AutoStartStatus,
+    DriveOpenEvent,
     MountEvent,
     MountStatus,
     RcloneStatus,
-    Remote
+    Remote,
+    SpeedEvent,
+    ToastEvent
 } from "./models.js";

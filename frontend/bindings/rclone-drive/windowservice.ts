@@ -19,6 +19,7 @@ export function OpenAddDrive(): $CancellablePromise<void> {
 
 /**
  * OpenEditDrive 打开（或聚焦）编辑驱动器窗口，name 为现有远程名称。
+ * 驱动器已连接时的确认与断开由界面负责（见 DriveCard.vue）。
  */
 export function OpenEditDrive(name: string): $CancellablePromise<void> {
     return $Call.ByID(2006650107, name);

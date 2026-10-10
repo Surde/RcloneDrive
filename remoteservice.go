@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 
-	"rclone-drive/internal/backend"
 	"rclone-drive/internal/rclone"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -26,12 +25,14 @@ func init() {
 
 // Remote 描述一个远程存储及其本地挂载偏好。
 type Remote struct {
-	Name        string            `json:"name"`
-	Type        string            `json:"type"`
-	MountPoint  string            `json:"mountPoint"`
-	AutoConnect bool              `json:"autoConnect"`
-	ReadOnly    bool              `json:"readOnly"`
-	Options     map[string]string `json:"options"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	MountPoint  string `json:"mountPoint"`
+	AutoConnect bool   `json:"autoConnect"`
+	ReadOnly    bool   `json:"readOnly"`
+	// Insecure 为 true 时该驱动器的挂载跳过 TLS 证书校验（自签名证书用）
+	Insecure bool              `json:"insecure"`
+	Options  map[string]string `json:"options"`
 }
 
 // RemoteService 管理远程存储的增删改查与连接测试。
@@ -65,9 +66,14 @@ func (s *RemoteService) OnChange(fn func()) {
 func (s *RemoteService) notifyChange() {
 	s.mu.RLock()
 	observers := make([]func(), len(s.observers))
+	copy(observers, s.observers)
 	app := s.app
 	s.mu.RUnlock()
+	// 在锁外回调，避免观察者里再次访问 s.mu 造成死锁
 	for _, fn := range observers {
+		if fn == nil {
+			continue
+		}
 		fn()
 	}
 	if app != nil {
@@ -140,9 +146,25 @@ func (s *RemoteService) Get(name string) (Remote, bool) {
 	return Remote{}, false
 }
 
-// Backends 返回所有支持的协议定义，供前端渲染表单。
-func (s *RemoteService) Backends() []backend.BackendDef {
-	return backend.All()
+// BackendCatalog 返回按用途分组的连接类型目录（rclone 全部后端），供前端渲染左侧树。
+func (s *RemoteService) BackendCatalog() []rclone.BackendGroup {
+	return rclone.Catalog()
+}
+
+// BackendFields 返回某个连接类型的配置字段（基本 + 高级），供前端渲染表单。
+func (s *RemoteService) BackendFields(typ string) ([]rclone.Field, error) {
+	return rclone.Fields(typ)
+}
+
+// TypeLabels 返回连接类型 → 界面名的映射，供主界面显示协议名。
+func (s *RemoteService) TypeLabels() map[string]string {
+	labels := make(map[string]string)
+	for _, group := range rclone.Catalog() {
+		for _, item := range group.Types {
+			labels[item.Type] = item.Label
+		}
+	}
+	return labels
 }
 
 // Create 校验并新建远程存储，敏感字段写入 INI 前会做 rclone 混淆。
@@ -159,15 +181,13 @@ func (s *RemoteService) Create(remote Remote) error {
 	return s.save()
 }
 
-// Update 校验并更新远程存储；若已挂载则先卸载再重写配置。
+// Update 校验并更新远程存储；已连接的驱动器需要先断开连接，避免连接中途改写配置。
 func (s *RemoteService) Update(remote Remote) error {
 	if err := s.validate(remote, false); err != nil {
 		return err
 	}
 	if s.mounts.IsMounted(remote.Name) {
-		if err := s.mounts.Unmount(remote.Name); err != nil {
-			return err
-		}
+		return fmt.Errorf("「%s」已连接，请先断开连接再编辑", remote.Name)
 	}
 	if err := s.writeConfigSection(remote); err != nil {
 		return err
@@ -209,10 +229,11 @@ func (s *RemoteService) Delete(name string) error {
 
 // Test 在进程内建立连接并列举根目录，验证远程存储可用。
 func (s *RemoteService) Test(name string) error {
-	if _, ok := s.Get(name); !ok {
+	remote, ok := s.Get(name)
+	if !ok {
 		return fmt.Errorf("远程存储不存在: %s", name)
 	}
-	return rclone.TestRemote(name)
+	return rclone.TestRemote(name, remote.Insecure)
 }
 
 func (s *RemoteService) validate(remote Remote, creating bool) error {
@@ -223,8 +244,8 @@ func (s *RemoteService) validate(remote Remote, creating bool) error {
 	if !remoteNamePattern.MatchString(name) {
 		return fmt.Errorf("名称不能包含空白字符: %q", remote.Name)
 	}
-	def, ok := backend.Get(remote.Type)
-	if !ok {
+	fields, err := rclone.Fields(remote.Type)
+	if err != nil {
 		return fmt.Errorf("不支持的协议类型: %s", remote.Type)
 	}
 	_, exists := s.Get(name)
@@ -234,7 +255,7 @@ func (s *RemoteService) validate(remote Remote, creating bool) error {
 	if !creating && !exists {
 		return fmt.Errorf("远程存储不存在: %s", name)
 	}
-	for _, field := range def.Fields {
+	for _, field := range fields {
 		value := strings.TrimSpace(remote.Options[field.Key])
 		if field.Required && value == "" {
 			return fmt.Errorf("缺少必填字段: %s", field.Label)
@@ -245,7 +266,7 @@ func (s *RemoteService) validate(remote Remote, creating bool) error {
 
 // writeConfigSection 将远程存储的选项写入 rclone.conf，密码类字段由 rclone 自动混淆。
 func (s *RemoteService) writeConfigSection(remote Remote) error {
-	if _, ok := backend.Get(remote.Type); !ok {
+	if _, err := rclone.Fields(remote.Type); err != nil {
 		return fmt.Errorf("不支持的协议类型: %s", remote.Type)
 	}
 	return rclone.SaveRemote(remote.Name, remote.Type, remote.Options)

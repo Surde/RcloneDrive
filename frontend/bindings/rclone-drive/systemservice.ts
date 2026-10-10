@@ -34,3 +34,11 @@ export function Platform(): $CancellablePromise<string> {
 export function RcloneStatus(): $CancellablePromise<$models.RcloneStatus> {
     return $Call.ByID(3253154901);
 }
+
+/**
+ * UsedDriveLetters 返回已被占用的盘符（如 ["C:", "Y:"]），供界面过滤盘符下拉框；
+ * 非 Windows 平台没有盘符概念，返回空列表。
+ */
+export function UsedDriveLetters(): $CancellablePromise<string[] | null> {
+    return $Call.ByID(2386811808);
+}

@@ -12,7 +12,10 @@ import type * as main$0 from "../../../../../rclone-drive/models.js";
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "app:toast": main$0.ToastEvent;
+            "drive:open": main$0.DriveOpenEvent;
             "mount:changed": main$0.MountEvent;
+            "mount:speed": main$0.SpeedEvent;
             "remotes:changed": string;
         }
     }

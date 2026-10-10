@@ -12,17 +12,24 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as backend$0 from "./internal/backend/models.js";
+import * as rclone$0 from "./internal/rclone/models.js";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
 /**
- * Backends 返回所有支持的协议定义，供前端渲染表单。
+ * BackendCatalog 返回按用途分组的连接类型目录（rclone 全部后端），供前端渲染左侧树。
  */
-export function Backends(): $CancellablePromise<backend$0.BackendDef[] | null> {
-    return $Call.ByID(4264894842);
+export function BackendCatalog(): $CancellablePromise<rclone$0.BackendGroup[] | null> {
+    return $Call.ByID(812582960);
+}
+
+/**
+ * BackendFields 返回某个连接类型的配置字段（基本 + 高级），供前端渲染表单。
+ */
+export function BackendFields(typ: string): $CancellablePromise<rclone$0.Field[] | null> {
+    return $Call.ByID(2680318404, typ);
 }
 
 /**
@@ -68,7 +75,14 @@ export function Test(name: string): $CancellablePromise<void> {
 }
 
 /**
- * Update 校验并更新远程存储；若已挂载则先卸载再重写配置。
+ * TypeLabels 返回连接类型 → 界面名的映射，供主界面显示协议名。
+ */
+export function TypeLabels(): $CancellablePromise<{ [_ in string]?: string } | null> {
+    return $Call.ByID(180599220);
+}
+
+/**
+ * Update 校验并更新远程存储；已连接的驱动器需要先断开连接，避免连接中途改写配置。
  */
 export function Update(remote: $models.Remote): $CancellablePromise<void> {
     return $Call.ByID(3638702910, remote);

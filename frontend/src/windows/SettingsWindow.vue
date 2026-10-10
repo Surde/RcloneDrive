@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { toast } from "vue-sonner";
 import { Monitor, Moon, Sun } from "@lucide/vue";
 import * as SettingsService from "../../bindings/rclone-drive/settingsservice";
+import { notifyError, notifySuccess } from "@/lib/notify";
 import WindowBar from "../components/WindowBar.vue";
 import { useTheme, type ThemeMode } from "../composables/useTheme";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from "@/components/ui/field";
@@ -37,7 +37,7 @@ async function loadAutoStart() {
     autoStart.value = status.enabled;
     target.value = status.target;
   } catch (e) {
-    toast.error(errMsg(e));
+    notifyError(errMsg(e), "读取开机自启状态失败");
   } finally {
     loading.value = false;
   }
@@ -49,10 +49,13 @@ async function onToggleAutoStart(next: boolean) {
   saving.value = true;
   try {
     await SettingsService.SetAutoStart(next);
-    toast.success(next ? "已开启开机自启" : "已关闭开机自启");
+    notifySuccess(
+      next ? "已开启开机自启" : "已关闭开机自启",
+      next ? "登录系统后自动启动 RcloneDrive（静默进入托盘）" : "登录系统后不再自动启动 RcloneDrive",
+    );
     await loadAutoStart();
   } catch (e) {
-    toast.error(errMsg(e));
+    notifyError(errMsg(e), "设置开机自启失败");
     await loadAutoStart();
   } finally {
     saving.value = false;

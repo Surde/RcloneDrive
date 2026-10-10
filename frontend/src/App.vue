@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { HardDrive, Plus, TriangleAlert } from "@lucide/vue";
-import { Window } from "@wailsio/runtime";
+import { ref, onMounted, onUnmounted } from "vue";
+import { HardDrive, Plus, Settings, TriangleAlert, X } from "@lucide/vue";
+import { Events, Window } from "@wailsio/runtime";
 import type { RcloneStatus } from "../bindings/rclone-drive/models";
 import * as SystemService from "../bindings/rclone-drive/systemservice";
 import * as WindowService from "../bindings/rclone-drive/windowservice";
@@ -11,13 +11,27 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { X } from "@lucide/vue";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { notifyFromBackend } from "./lib/notify";
 import { useDrives } from "./composables/useDrives";
 import { useTheme } from "./composables/useTheme";
+import { useTypeLabels } from "./composables/useTypeLabels";
 
-const { remotes, statuses, loading, error, refresh } = useDrives();
+const { remotes, statuses, speeds, usages, loading, error, refresh } = useDrives();
+const { load: loadTypeLabels } = useTypeLabels();
+void loadTypeLabels();
+
+// 后端在主窗口可见时把提示作为事件发过来（隐藏到托盘时才改发系统通知）
 const { isDark } = useTheme();
+let offToast: (() => void) | undefined;
+onMounted(() => {
+  offToast = Events.On("app:toast", (event) => {
+    const data = event.data as { level?: string; title?: string; body?: string } | undefined;
+    if (!data?.title) return;
+    notifyFromBackend(data.level ?? "success", data.title, data.body ?? "");
+  });
+});
+onUnmounted(() => offToast?.());
 
 const rclone = ref<RcloneStatus | null>(null);
 
@@ -55,16 +69,35 @@ function closeWindow() {
           <img src="/logo.png" alt="RcloneDrive" class="size-5" />
           <h1 class="text-base font-semibold">RcloneDrive</h1>
         </div>
-        <div class="flex items-center gap-2" :style="{ '--wails-draggable': 'no-drag' }">
-          <Button size="sm" @click="openAdd">＋添加</Button>
-          <Button variant="outline" size="sm" @click="openSettings">⚙设置</Button>
-          <Button variant="ghost" size="icon" aria-label="关闭" @click="closeWindow">
-            <X data-icon="inline-start" />
-          </Button>
+        <div class="flex items-center gap-0.5" :style="{ '--wails-draggable': 'no-drag' }">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button variant="ghost" size="icon-sm" aria-label="添加驱动器" @click="openAdd">
+                <Plus />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>添加驱动器</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button variant="ghost" size="icon-sm" aria-label="设置" @click="openSettings">
+                <Settings />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>设置</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button variant="ghost" size="icon-sm" aria-label="关闭（隐藏到托盘）" @click="closeWindow">
+                <X />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>关闭（隐藏到托盘）</TooltipContent>
+          </Tooltip>
         </div>
       </header>
 
-      <main class="flex-1 overflow-y-auto p-4">
+      <main class="no-scrollbar flex-1 overflow-y-auto p-4">
         <Alert v-if="rclone && !rclone.found" variant="destructive" class="mb-4">
           <TriangleAlert />
           <AlertTitle>当前构建未启用挂载功能</AlertTitle>
@@ -76,7 +109,7 @@ function closeWindow() {
         </Alert>
 
         <div v-if="loading" class="flex flex-col gap-3">
-          <Skeleton v-for="i in 3" :key="i" class="h-[76px] w-full" />
+          <Skeleton v-for="i in 3" :key="i" class="h-[74px] w-full" />
         </div>
 
         <Alert v-else-if="error" variant="destructive">
@@ -107,6 +140,8 @@ function closeWindow() {
             :key="remote.name"
             :remote="remote"
             :status="statuses[remote.name]"
+            :speed="speeds[remote.name]"
+            :usage="usages[remote.name]"
             @changed="refresh"
           />
         </div>

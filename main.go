@@ -75,8 +75,13 @@ func main() {
 		window.Hide()
 	})
 
+	// 提示走 toast 还是系统通知，取决于主窗口是否可见（见 notifyUser）
+	mainWindow = window
+
 	trayHolder := newTrayManager(app, window, remoteService, mountService, windowService)
 	remoteService.OnChange(trayHolder.refresh)
+	// 子窗口收尾时需要唤起主窗口（新增驱动器关闭后显示主界面）
+	windowService.setMainWindow(window)
 
 	// 第二个实例的显示请求在应用就绪后弹出主界面
 	watchSecondInstanceShow(app, trayHolder.showWindow)

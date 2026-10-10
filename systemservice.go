@@ -40,3 +40,9 @@ func (s *SystemService) Platform() string {
 func (s *SystemService) DefaultMountPoint() string {
 	return nextFreeMountPoint()
 }
+
+// UsedDriveLetters 返回已被占用的盘符（如 ["C:", "Y:"]），供界面过滤盘符下拉框；
+// 非 Windows 平台没有盘符概念，返回空列表。
+func (s *SystemService) UsedDriveLetters() []string {
+	return usedDriveLetters()
+}

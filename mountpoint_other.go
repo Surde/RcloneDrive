@@ -15,3 +15,8 @@ func nextFreeMountPoint() string {
 	_ = os.MkdirAll(dir, 0o755)
 	return dir
 }
+
+// usedDriveLetters 在非 Windows 平台上没有盘符概念，返回空。
+func usedDriveLetters() []string {
+	return nil
+}

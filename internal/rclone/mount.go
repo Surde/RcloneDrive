@@ -12,6 +12,8 @@ import (
 
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/accounting"
+	"github.com/rclone/rclone/fs/rc"
 	"github.com/rclone/rclone/vfs/vfscommon"
 )
 
@@ -19,6 +21,8 @@ const (
 	logMaxLines        = 200
 	mountReadyTimeout  = 20 * time.Second
 	mountReadyInterval = 200 * time.Millisecond
+	// usageTimeout 是查询远端容量的超时（sftp 等后端要通过 SSH 跑 df）
+	usageTimeout = 15 * time.Second
 )
 
 func stamp() string {
@@ -57,9 +61,11 @@ func (b *logBuffer) Write(p []byte) (int, error) {
 func (b *logBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// head 指向下一个待写入槽位，最早的一行在 (head-count) 处
+	start := (b.head - b.count + logMaxLines) % logMaxLines
 	out := make([]string, 0, b.count)
 	for i := 0; i < b.count; i++ {
-		out = append(out, b.lines[(b.head+i)%logMaxLines])
+		out = append(out, b.lines[(start+i)%logMaxLines])
 	}
 	return strings.Join(out, "\n")
 }
@@ -68,6 +74,10 @@ type mountEntry struct {
 	point  *mountlib.MountPoint
 	log    *logBuffer
 	target string
+
+	// statsCtx 带上该驱动器的 rclone 统计分组：写入（operations.Rcat）按 ctx 归属到它，
+	// 读取则固定记在全局统计里（见 Speed）
+	statsCtx context.Context
 }
 
 // MountManager 基于内嵌的 rclone mountlib 管理挂载的生命周期。
@@ -125,11 +135,21 @@ func friendlyMountError(target string, err error) error {
 	if strings.Contains(msg, "mountpoint path already exists") {
 		return fmt.Errorf("挂载点 %s 已被占用，请在驱动器设置中换一个盘符后重试", target)
 	}
-	return err
+	return certHint(err)
+}
+
+// certHint 给证书类错误补上可操作的提示：自签名证书在自建服务器上很常见，
+// 对应驱动器设置里的「忽略证书错误」。
+func certHint(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "x509:") {
+		return err
+	}
+	return fmt.Errorf("%w（若服务端使用自签名证书，请在编辑驱动器时勾选「忽略证书错误」）", err)
 }
 
 // Mount 在当前进程中把远程存储挂载到 target（Windows 为盘符，如 "Z:"）。
-func (m *MountManager) Mount(remote, target string, readOnly bool) error {
+// insecure 为 true 时该挂载跳过 TLS 证书校验（自签名证书的自建服务器用）。
+func (m *MountManager) Mount(remote, target string, readOnly, insecure bool) error {
 	mountType, mountFn := mountlib.ResolveMountMethod("")
 	if mountFn == nil {
 		return errors.New("当前构建未启用挂载功能：请使用 -tags cmount 构建，并在 Windows 上安装 WinFsp")
@@ -149,7 +169,7 @@ func (m *MountManager) Mount(remote, target string, readOnly bool) error {
 		}
 	}
 
-	f, err := fs.NewFs(context.Background(), remote+":")
+	f, err := fs.NewFs(ConfigCtx(context.Background(), insecure), remote+":")
 	if err != nil {
 		return fmt.Errorf("打开远程存储失败: %w", err)
 	}
@@ -161,9 +181,13 @@ func (m *MountManager) Mount(remote, target string, readOnly bool) error {
 	mountOpt.VolumeName = remote
 
 	log := newLogBuffer()
-	fmt.Fprintf(log, "[%s] 使用 %s 挂载 %s -> %s (只读=%v)\n", stamp(), mountType, remote, target, readOnly)
+	fmt.Fprintf(log, "[%s] 使用 %s 挂载 %s -> %s (只读=%v, 忽略证书错误=%v)\n", stamp(), mountType, remote, target, readOnly, insecure)
+
+	// 该驱动器的统计分组：写入路径（operations.Rcat）按 ctx 记账，用于读取写入速率
+	statsCtx := accounting.WithStatsGroup(ConfigCtx(context.Background(), insecure), remote)
 
 	point := mountlib.NewMountPoint(mountFn, target, f, &mountOpt, &vfsOpt)
+	point.Ctx = statsCtx
 	if _, err := point.Mount(); err != nil {
 		friendly := friendlyMountError(target, err)
 		fmt.Fprintf(log, "[%s] 挂载失败: %v\n", stamp(), err)
@@ -175,7 +199,7 @@ func (m *MountManager) Mount(remote, target string, readOnly bool) error {
 		return err
 	}
 
-	entry := &mountEntry{point: point, log: log, target: point.MountPoint}
+	entry := &mountEntry{point: point, log: log, target: point.MountPoint, statsCtx: statsCtx}
 	m.mu.Lock()
 	m.mounts[remote] = entry
 	m.mu.Unlock()
@@ -274,6 +298,70 @@ func (m *MountManager) Log(remote string) string {
 	return entry.log.String()
 }
 
+// Usage 描述挂载盘的空间用量（字节）。
+type Usage struct {
+	Total int64 `json:"total"`
+	Used  int64 `json:"used"`
+	Free  int64 `json:"free"`
+}
+
+// Usage 返回指定远程的容量信息；未挂载或后端不支持时返回 nil。
+func (m *MountManager) Usage(remote string) *Usage {
+	m.mu.Lock()
+	entry, ok := m.mounts[remote]
+	m.mu.Unlock()
+	if !ok || entry.point == nil || entry.point.Fs == nil {
+		return nil
+	}
+	about := entry.point.Fs.Features().About
+	if about == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
+	defer cancel()
+	usage, err := about(ctx)
+	if err != nil || usage == nil {
+		return nil
+	}
+
+	total, used, free := int64(0), int64(0), int64(0)
+	if usage.Total != nil {
+		total = *usage.Total
+	}
+	if usage.Used != nil {
+		used = *usage.Used
+	}
+	if usage.Free != nil {
+		free = *usage.Free
+	}
+	// 后端给的信息不一定全，能推的补上
+	if free == 0 && total > 0 && used > 0 {
+		free = total - used
+	}
+	if used == 0 && total > 0 && free > 0 {
+		used = total - free
+	}
+	if total == 0 && free > 0 && used > 0 {
+		total = free + used
+	}
+	if total <= 0 {
+		return nil
+	}
+	return &Usage{Total: total, Used: used, Free: free}
+}
+
+// Usages 返回所有已挂载远程的容量信息（不支持的会被省略）。
+func (m *MountManager) Usages() map[string]Usage {
+	usages := make(map[string]Usage)
+	for _, name := range m.ListMounted() {
+		if usage := m.Usage(name); usage != nil {
+			usages[name] = *usage
+		}
+	}
+	return usages
+}
+
 // Target 返回指定远程的挂载目标（盘符或目录）。
 func (m *MountManager) Target(remote string) string {
 	m.mu.Lock()
@@ -282,6 +370,106 @@ func (m *MountManager) Target(remote string) string {
 		return entry.target
 	}
 	return ""
+}
+
+// Speed 是单个驱动器的实时速率（字节/秒）。
+type Speed struct {
+	Down float64 `json:"down"` // 下行：从挂载盘读取
+	Up   float64 `json:"up"`   // 上行：写入挂载盘
+}
+
+// Speed 返回指定远程的实时速率；未挂载或无进行中的传输时返回零值。
+//
+// rclone 的挂载读写记在两个地方，都要取：
+//   - 读取：vfs 的读路径固定写入全局统计（vfs/read.go 用的是 GlobalStats）
+//   - 写入：operations.Rcat 按 ctx 记账，落在该驱动器的统计分组里
+//
+// 两边的「进行中传输」都带名称、实时速率与 srcFs/dstFs：
+// dstFs 为空的是读取（下载），否则是写入（上传）。
+func (m *MountManager) Speed(remote string) Speed {
+	m.mu.Lock()
+	entry, ok := m.mounts[remote]
+	m.mu.Unlock()
+	if !ok {
+		return Speed{}
+	}
+
+	want := remote + ":"
+	speed := transfersSpeed(accounting.GlobalStats(), want)
+	if entry.statsCtx != nil {
+		speed.Up += transfersSpeed(accounting.Stats(entry.statsCtx), want).Up
+	}
+	return speed
+}
+
+// Speeds 返回所有已挂载远程的实时速率。
+func (m *MountManager) Speeds() map[string]Speed {
+	speeds := make(map[string]Speed)
+	for _, name := range m.ListMounted() {
+		speeds[name] = m.Speed(name)
+	}
+	return speeds
+}
+
+// transfersSpeed 累加某份统计里属于该远程的进行中传输速率，并按方向分类。
+// 归属依据：传输自带的 srcFs/dstFs（fs.ConfigString 形式，如 "远程名:"），
+// 以及以 "远程名:" 开头的名称（有些传输不带 Fs 信息）。
+func transfersSpeed(stats *accounting.StatsInfo, want string) Speed {
+	var speed Speed
+	params, err := stats.RemoteStats(false)
+	if err != nil {
+		return speed
+	}
+	transfers, ok := params["transferring"].([]rc.Params)
+	if !ok {
+		return speed
+	}
+	for _, transfer := range transfers {
+		if !transferBelongsTo(transfer, want) {
+			continue
+		}
+		value := transferSpeed(transfer)
+		if value <= 0 {
+			continue
+		}
+		if transferIsUpload(transfer) {
+			speed.Up += value
+		} else {
+			speed.Down += value
+		}
+	}
+	return speed
+}
+
+// transferSpeed 取一条传输的速率：
+// 优先用 rclone 的近期移动平均（speedAvg，代表当前速率），它每个采样周期才更新一次，
+// 传输刚开始时还是 0，此时退回累计平均（speed），否则短传输会完全没有数字。
+func transferSpeed(transfer rc.Params) float64 {
+	if value, ok := transfer["speedAvg"].(float64); ok && value > 0 {
+		return value
+	}
+	if value, ok := transfer["speed"].(float64); ok && value > 0 {
+		return value
+	}
+	return 0
+}
+
+// transferBelongsTo 判断一条传输是否属于指定远程。
+func transferBelongsTo(transfer rc.Params, want string) bool {
+	for _, key := range []string{"srcFs", "dstFs"} {
+		if value, ok := transfer[key].(string); ok && strings.TrimSuffix(value, ":") == strings.TrimSuffix(want, ":") {
+			return true
+		}
+	}
+	name, _ := transfer["name"].(string)
+	return strings.HasPrefix(name, want)
+}
+
+// transferIsUpload 判断传输方向：上传（写入挂载盘）的 dstFs 是挂载的 Fs，
+// 读取则是 srcFs 指向它、dstFs 为空（见 vfs/read.go 与 operations.Rcat）。
+func transferIsUpload(transfer rc.Params) bool {
+	value, ok := transfer["dstFs"].(string)
+	return ok && value != ""
 }
 
 // UnmountAll 卸载所有挂载，用于应用退出时清理。

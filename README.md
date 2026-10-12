@@ -38,6 +38,10 @@ rclone 以 Go 依赖库的形式接入（`github.com/rclone/rclone`），既不�
 
 关闭主窗口只是隐藏到托盘，挂载与传输继续在后台运行。托盘菜单实时显示每台驱动器的连接状态，随时可以连接、断开或编辑。挂载断开、检查更新等后台事件使用系统原生通知；同一时间只运行一个实例。
 
+### 🔄 自动更新
+
+内置基于 Wails v3 更新器的应用内自更新：以 GitHub Releases 为更新源，启动后及每 6 小时后台检查一次。发现新版本后**自动下载并安装**（Windows 使用便携版二进制替换，无需管理员权限），完成后通知「重启生效」——重启由用户确认，避免擅自中断挂载。下载进度可在设置窗口查看，托盘菜单也可随时手动检查。
+
 <br/>
 
 <a id="screenshots"></a>
@@ -60,7 +64,7 @@ rclone 以 Go 依赖库的形式接入（`github.com/rclone/rclone`），既不�
 <br/>
 <br/>
 
-<p><strong>设置</strong> —— 主题（跟随系统 / 浅色 / 深色）与开机自启</p>
+<p><strong>设置</strong> —— 主题（跟随系统 / 浅色 / 深色）、开机自启与自动更新</p>
 
 <img src="./examples/settings.png" width="560" alt="设置" />
 
@@ -119,7 +123,7 @@ rclone 以 Go 依赖库的形式接入（`github.com/rclone/rclone`），既不�
 |---|---|
 | `RcloneDrive v…` | 当前版本（不可点击） |
 | **显示主界面** | 从托盘恢复主窗口 |
-| **检查更新** | 查询 GitHub Releases，有新版本时用系统通知提示 |
+| **检查更新** | 检查 GitHub 更新；有新版本时自动下载安装，就绪后通知重启生效 |
 | **添加驱动器** | 打开新增驱动器窗口 |
 | **设置** | 打开设置窗口 |
 | **驱动器名（盘符）** | 子菜单，见下 |
@@ -148,6 +152,7 @@ rclone 以 Go 依赖库的形式接入（`github.com/rclone/rclone`），既不�
 
 - **主题**：跟随系统 / 浅色 / 深色，默认跟随系统，选择会记忆在本地。
 - **开机自启**：开启后登录系统即自动启动并静默进入托盘；窗口会显示当前自启项指向的命令。
+- **更新**：显示当前版本并可手动检查；发现新版本后自动下载，窗口内实时显示进度，就绪后一键重启生效。
 
 | 平台 | 开机自启实现 |
 |---|---|
@@ -176,7 +181,7 @@ rclone 以 Go 依赖库的形式接入（`github.com/rclone/rclone`），既不�
 
 | 平台 | 说明 |
 |---|---|
-| Windows | NSIS 安装包；如缺少 WebView2 运行时会自动安装。挂载需要 [WinFsp](https://winfsp.dev/) |
+| Windows | NSIS 安装包，per-user 安装到 `%LOCALAPPDATA%\Programs\RcloneDrive`，无需管理员权限；如缺少 WebView2 运行时会自动安装。挂载需要 [WinFsp](https://winfsp.dev/) |
 | macOS | 挂载需要 [macFUSE](https://osxfuse.github.io/)，打包配置见 `build/darwin` |
 | Linux | 挂载需要 `fuse3`，打包配置见 `build/linux` |
 
@@ -236,6 +241,8 @@ cd frontend && pnpm build
 
 版本号取自 tag（去掉 `v` 前缀）：CI 先用 `wails3 update build-assets -productversion` 把版本写进各平台包元数据（NSIS 安装包、`Info.plist`、nfpm 等），再构建打包，并通过 `APP_VERSION` 把版本注入二进制（`-X main.appVersion`）。本机打包时也可以用 `APP_VERSION=0.2.0 task package` 覆盖二进制与 NSIS 安装包的版本。
 
+自动更新以后续 Release 的便携版二进制为更新载体：Windows 按平台 / 架构匹配 `RcloneDrive-<版本>-windows-amd64-portable.exe`（安装包 `...-setup.exe` 不会被选中），下载后由更新器替换运行中的 exe 并在用户确认重启后生效。
+
 ### 图标
 
 应用图标与界面 logo 由仓库内的生成器产出（仅标准库，改完 `build/tools/icon/main.go` 里的几何或配色后重跑即可）：
@@ -271,6 +278,7 @@ go run ./build/tools/icon build/windows/tray.png 32    # 托盘图标
 ├── mountservice.go         # 挂载 / 卸载 / 状态管理
 ├── notificationservice.go  # 界面提示转系统原生通知
 ├── settingsservice.go      # 主题与开机自启
+├── updateservice.go        # 自动更新（Wails updater，GitHub Releases 更新源）
 ├── internal/
 │   └── rclone/             # 内嵌 rclone：全部后端注册、连接类型目录、配置读写、挂载生命周期
 ├── frontend/               # Vue 3 源码与 Wails 自动生成的 TS 绑定
@@ -304,7 +312,6 @@ go run ./build/tools/icon build/windows/tray.png 32    # 托盘图标
 ### Roadmap
 
 - [ ] 传输速度与缓存监控
-- [ ] 应用内自动下载并安装更新（目前「检查更新」只提示并跳转 Releases 页面）
 - [ ] 图形化的 OAuth 授权（Google Drive / OneDrive 等目前需要粘贴 token）
 
 <a id="disclaimer"></a>

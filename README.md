@@ -204,6 +204,7 @@ WinFsp 的 SDK 头文件随仓库提供（`third_party/winfsp/inc`，取自 [win
 | --- | --- |
 | `MINGW_GCC` | 指定使用的 gcc（覆盖自动解析），如 `MINGW_GCC="C:/path/to/mingw64/bin/gcc.exe"` |
 | `WINFSP_INC` | 改用外部 WinFsp SDK 的 `inc/fuse` 目录，如 `WINFSP_INC="D:/sdk/inc/fuse"` |
+| `APP_VERSION` | 覆盖构建产物的版本号（二进制与 NSIS 安装包），默认取 `update.go` 里的 `appVersion`，如 `APP_VERSION=0.2.0 task package` |
 | `CGO_ENABLED=0` | 关闭 cgo；构建出的应用可正常管理驱动器配置，但无法挂载 |
 
 常用命令：
@@ -228,6 +229,12 @@ cd frontend && pnpm build
 
 > [!NOTE]
 > Windows 安装包（NSIS）创建开始菜单 / 桌面快捷方式后会调用 `build/windows/nsis/set-shortcut-aumid.ps1` 写入 AppUserModelID，固定到任务栏的图标才能与运行中的窗口合并成一个按钮。该脚本与 `project.nsi` 都必须保持纯 ASCII —— PowerShell 5.1 与 makensis 都以 ANSI 读取无 BOM 的脚本文件。
+
+### 发布
+
+推送 `v*` 形式的 tag（如 `v0.2.0`）会触发 `Package` 工作流：在 Windows、macOS、Linux 的 runner 上分别打包（NSIS 安装包与免安装 exe、通用包的 `.app` / `.dmg`、AppImage 与 deb / rpm / AUR），创建 GitHub Release 并附加全部产物；`workflow_dispatch` 手动触发只上传 workflow artifact，不创建 Release。
+
+版本号取自 tag（去掉 `v` 前缀）：CI 先用 `wails3 update build-assets -productversion` 把版本写进各平台包元数据（NSIS 安装包、`Info.plist`、nfpm 等），再构建打包，并通过 `APP_VERSION` 把版本注入二进制（`-X main.appVersion`）。本机打包时也可以用 `APP_VERSION=0.2.0 task package` 覆盖二进制与 NSIS 安装包的版本。
 
 ### 图标
 

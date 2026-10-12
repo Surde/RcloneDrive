@@ -5,13 +5,13 @@
 !include "FileFunc.nsh"
 
 !ifndef INFO_PROJECTNAME
-    !define INFO_PROJECTNAME "RcloneDrive"
+    !define INFO_PROJECTNAME "rclonedrive"
 !endif
 !ifndef INFO_COMPANYNAME
     !define INFO_COMPANYNAME "younland"
 !endif
 !ifndef INFO_PRODUCTNAME
-    !define INFO_PRODUCTNAME "My Product"
+    !define INFO_PRODUCTNAME "RcloneDrive"
 !endif
 !ifndef INFO_PRODUCTVERSION
     !define INFO_PRODUCTVERSION "0.1.0"

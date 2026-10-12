@@ -6,10 +6,10 @@
 		"0000": {
 			"ProductVersion": "0.1.0",
 			"CompanyName": "younland",
-			"FileDescription": "A RcloneDrive application",
+			"FileDescription": "把云端存储挂载成本地盘符的跨平台桌面工具",
 			"LegalCopyright": "© 2026, younland",
-			"ProductName": "My Product",
-			"Comments": "This is a comment"
+			"ProductName": "RcloneDrive",
+			"Comments": "内嵌 rclone 的云存储挂载工具"
 		}
 	}
 }

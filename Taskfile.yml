@@ -8,6 +8,9 @@ vars:
   # 内嵌 rclone 的 cmount 挂载实现需要 cgo，编译期需 WinFsp 头文件与 C 工具链。
   # 头文件随仓库提供（third_party/winfsp/inc）；用 WINFSP_INC 环境变量可指向外部 SDK。
   WINFSP_INC_DIR: '{{.WINFSP_INC | default (printf "%s/third_party/winfsp/inc/fuse" .ROOT_DIR)}}'
+  # 版本号：构建时注入二进制（-X main.appVersion）与 Windows 安装包版本；
+  # 用 `APP_VERSION=1.2.3 task package`（或同名环境变量）覆盖，CI 按 tag 传入。
+  APP_VERSION: '{{.APP_VERSION | default "0.1.0"}}'
   # Target OS for build/package/run. Defaults to the host OS, and is overridden
   # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
   # tasks below dispatch to the matching platform Taskfile via this variable.

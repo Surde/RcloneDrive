@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A RcloneDrive application
+Name=RcloneDrive
+Comment=把云端存储挂载成本地盘符的跨平台桌面工具
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/rclonedrive.exe %u
+Exec=/usr/local/bin/rclonedrive %u
 Terminal=false
 Type=Application
-Icon=rclonedrive.exe
+Icon=rclonedrive
 Categories=Utility;
-StartupWMClass=rclonedrive.exe
+StartupWMClass=rclonedrive
 
  

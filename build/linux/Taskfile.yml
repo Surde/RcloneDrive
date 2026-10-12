@@ -3,6 +3,11 @@ version: '3'
 includes:
   common: ../Taskfile.yml
 
+# nfpm 读的 build/linux/nfpm/nfpm.yaml 里用 ${GOARCH} 占位，而 `task package`
+# 直接调用 nfpm 时不会经过 build 任务，所以在这里统一导出。
+env:
+  GOARCH: '{{.ARCH | default ARCH}}'
+
 vars:
   # Signing configuration - edit these values for your project
   # PGP_KEY: "path/to/signing-key.asc"

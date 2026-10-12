@@ -5,13 +5,15 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "My Company" # The name of the company
-  productName: "My Product" # The name of the application
-  productIdentifier: "com.mycompany.myproduct" # The unique product identifier
-  description: "A program that does X" # The application description
-  copyright: "(c) 2025, My Company" # Copyright text
-  comments: "Some Product Comments" # Comments
-  version: "0.0.1" # The application version
+  companyName: "younland" # The name of the company
+  productName: "RcloneDrive" # The name of the application
+  productIdentifier: "com.younland.rclonedrive" # The unique product identifier
+  description: "把云端存储挂载成本地盘符的跨平台桌面工具" # The application description
+  copyright: "© 2026, younland" # Copyright text
+  comments: "内嵌 rclone 的云存储挂载工具" # Comments
+  # 应用版本，生成各平台包元数据（NSIS 安装包、Info.plist、nfpm 等）时使用；
+  # 与 update.go 里 appVersion 的默认值保持一致，发布时由 CI 按 tag 覆盖。
+  version: "0.1.0"
   # cfBundleIconName: "appicon" # The macOS icon name in Assets.car icon bundles (optional)
   #                               # Should match the name of your .icon file without the extension
   #                               # If not set and Assets.car exists, defaults to "appicon"

@@ -181,7 +181,7 @@ rclone 以 Go 依赖库的形式接入（`github.com/rclone/rclone`），既不�
 
 | 平台 | 说明 |
 |---|---|
-| Windows | NSIS 安装包，per-user 安装到 `%LOCALAPPDATA%\Programs\RcloneDrive`，无需管理员权限；如缺少 WebView2 运行时会自动安装。挂载需要 [WinFsp](https://winfsp.dev/) |
+| Windows | NSIS 安装包，per-user 安装到 `%LOCALAPPDATA%\Programs\RcloneDrive`，无需管理员权限；如缺少 WebView2 运行时会自动安装；安装包内置 WinFsp 安装程序，缺失时会请求管理员权限静默安装（免安装 exe 不含 WinFsp，挂载前需自行安装） |
 | macOS | 挂载需要 [macFUSE](https://osxfuse.github.io/)，打包配置见 `build/darwin` |
 | Linux | 挂载需要 `fuse3`，打包配置见 `build/linux` |
 
@@ -202,6 +202,8 @@ winget install -e --id BrechtSanders.WinLibs.POSIX.UCRT
 不用手动把它加进 `PATH`：构建时按「`PATH` 中的 gcc → winget 安装的 WinLibs」顺序自动解析（见 `build/windows/find-cc.ps1`），也可以用 `MINGW_GCC` 指定；安装 `BrechtSanders.WinLibs.POSIX.MSVCRT` 变体同样可用。
 
 WinFsp 的 SDK 头文件随仓库提供（`third_party/winfsp/inc`，取自 [winfsp](https://github.com/winfsp/winfsp) 的 `ebd50e1`，即 `v2.2B4` 之后 6 个提交，许可证见同目录 `License.txt`），**无需另外安装 SDK**：`task build` 与 `task dev` 会自动把 `CPATH` 指向 `third_party/winfsp/inc/fuse`。
+
+运行时方面，NSIS 安装包内置了官方 WinFsp MSI（`build/windows/nsis/winfsp-2.1.25156.msi`，取自 [v2.1](https://github.com/winfsp/winfsp/releases/tag/v2.1)，SHA256 与发布页核对一致）：安装时检测到系统未装 WinFsp 会请求管理员权限静默安装；免安装 exe 不包含它，挂载前需自行安装。升级 MSI 时同步更新 `build/windows/nsis/project.nsi` 中的文件名。
 
 需要覆盖默认配置时使用环境变量：
 
@@ -319,7 +321,7 @@ go run ./build/tools/icon build/windows/tray.png 32    # 托盘图标
 ## ⚠️ 免责声明
 
 - **与其它项目的关系**：RcloneDrive 是独立开源项目，与 RaiDrive、rclone 官方及 WinFsp 项目均无关联、合作或背书关系。
-- **系统组件**：挂载能力依赖系统文件系统驱动（Windows 的 WinFsp、macOS 的 macFUSE、Linux 的 fuse3），请遵守各自的许可证；仓库内随附的 WinFsp SDK 头文件遵循 `third_party/winfsp/License.txt`。
+- **系统组件**：挂载能力依赖系统文件系统驱动（Windows 的 WinFsp、macOS 的 macFUSE、Linux 的 fuse3），请遵守各自的许可证；仓库内随附的 WinFsp SDK 头文件遵循 `third_party/winfsp/License.txt`，安装包内置的 WinFsp MSI 遵循 WinFsp 的 GPLv3 许可（其官网亦提供商业许可）。
 - **数据责任**：远程存储的地址与凭据保存在本机，挂载后的读写由用户自行负责，请遵守对应云服务商的服务条款。
 
 <a id="license"></a>

@@ -96,6 +96,43 @@ Section
 
     !insertmacro wails.webview2runtime
 
+    # WinFsp runtime (required for mounting): at runtime cgofuse falls back to the
+    # HKLM\SOFTWARE\WOW6432Node\WinFsp InstallDir registry value when it cannot load
+    # winfsp-x64.dll directly, so the presence of that value is our "installed" test.
+    # Only the x64 MSI is bundled here; on non-x64 Windows users install WinFsp themselves.
+    ${If} ${IsNativeAMD64}
+        SetRegView 32
+        ReadRegStr $0 HKLM "SOFTWARE\WinFsp" "InstallDir"
+        ${If} $0 == ""
+            SetDetailsPrint both
+            DetailPrint "Installing: WinFsp (required for drive mounting)"
+            SetDetailsPrint listonly
+            InitPluginsDir
+            SetOutPath "$PLUGINSDIR\winfsp"
+            File "winfsp-2.1.25156.msi"
+            # The WinFsp MSI is a per-machine install: run it directly when already
+            # elevated; in a per-user install elevate via runas (UAC prompt) first.
+            UserInfo::GetAccountType
+            Pop $1
+            ${If} $1 == "Admin"
+                ExecWait 'msiexec /i "$PLUGINSDIR\winfsp\winfsp-2.1.25156.msi" /qn /norestart'
+            ${Else}
+                ExecShellWait "runas" "msiexec.exe" '/i "$PLUGINSDIR\winfsp\winfsp-2.1.25156.msi" /qn /norestart'
+            ${EndIf}
+            # Verify the install; warn on failure (no popup in silent mode)
+            ReadRegStr $0 HKLM "SOFTWARE\WinFsp" "InstallDir"
+            ${If} $0 == ""
+                IfSilent silentWinFsp notSilentWinFsp
+                notSilentWinFsp:
+                    MessageBox MB_ICONEXCLAMATION|MB_OK "WinFsp could not be installed, mounting will not work.$\nPlease install it manually from https://winfsp.dev/rel/."
+                silentWinFsp:
+            ${EndIf}
+        ${EndIf}
+        SetRegView 64
+    ${Else}
+        DetailPrint "Note: WinFsp runtime is not bundled for non-x64 Windows; install it from https://winfsp.dev/rel/ to enable mounting"
+    ${EndIf}
+
     SetOutPath $INSTDIR
     
     !insertmacro wails.files

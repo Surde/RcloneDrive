@@ -320,6 +320,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # gh 需要 git 仓库上下文来解析远程仓库（GH_REPO 也可用，但 checkout 更直观）
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist

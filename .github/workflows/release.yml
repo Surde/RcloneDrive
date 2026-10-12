@@ -251,18 +251,20 @@ jobs:
           version: ${{ env.TASK_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 安装 wails3 CLI
-        run: |
-          go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS3_VERSION}"
-          echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
-
       # GTK4 / WebKitGTK 6.0 是 Wails v3 Linux 的运行与编译依赖，fuse3 供 cmount 使用，
       # libfuse2 供 AppImage 打包工具自身运行（24.04 起改名为 libfuse2t64）。
+      # 注意必须装在 wails3 CLI 之前：CLI 用 go install 从源码编译，
+      # 需要 gtk4/webkitgtk 的 pkg-config 依赖才能通过 cgo 检测。
       - name: 安装系统依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libfuse3-dev
           sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2 || true
+
+      - name: 安装 wails3 CLI
+        run: |
+          go install "github.com/wailsapp/wails/v3/cmd/wails3@${WAILS3_VERSION}"
+          echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
 
       - name: 写入版本号到包元数据
         run: |

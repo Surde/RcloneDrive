@@ -1,15 +1,30 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Monitor, Moon, Sun } from "@lucide/vue";
 import * as SettingsService from "../../bindings/rclone-drive/settingsservice";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { formatSize, formatSpeed } from "@/lib/format";
 import WindowBar from "../components/WindowBar.vue";
 import { useTheme, type ThemeMode } from "../composables/useTheme";
+import { useUpdate } from "../composables/useUpdate";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/sonner";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 const { mode, isDark, setMode } = useTheme();
 
@@ -59,6 +74,59 @@ async function onToggleAutoStart(next: boolean) {
     await loadAutoStart();
   } finally {
     saving.value = false;
+  }
+}
+
+const { status, progress, error, busy, ready, downloading, check, restart } = useUpdate();
+
+const confirmRestart = ref(false);
+
+// 更新状态的人类可读描述
+const statusText = computed(() => {
+  if (error.value) return "检查更新失败：" + error.value;
+  const state = status.value?.state ?? "";
+  switch (state) {
+    case "checking":
+      return "正在检查更新…";
+    case "available":
+      return status.value?.latest ? `发现新版本 v${status.value.latest}，准备下载…` : "发现新版本，准备下载…";
+    case "verifying":
+      return "正在校验更新…";
+    case "installing":
+      return "正在安装更新…";
+    case "error":
+      return "检查更新失败";
+    default:
+      break;
+  }
+  if (ready.value) return "更新已就绪，重启后生效";
+  if (state === "up-to-date") return "已是最新版本";
+  return "点击「检查更新」查看是否有新版本";
+});
+
+// 下载进度百分比（total 未知时保持 0，进度条显示不确定进度）
+const percent = computed(() => {
+  const total = progress.value?.total ?? 0;
+  const written = progress.value?.written ?? 0;
+  return total > 0 ? Math.min(100, Math.round((written / total) * 100)) : 0;
+});
+
+const progressText = computed(() => {
+  const total = progress.value?.total ?? 0;
+  const written = progress.value?.written ?? 0;
+  const rate = formatSpeed(progress.value?.rate ?? 0);
+  return total > 0 ? `${formatSize(written)} / ${formatSize(total)} · ${rate}` : `已下载 ${formatSize(written)} · ${rate}`;
+});
+
+async function onCheckUpdate() {
+  await check();
+}
+
+async function onRestart() {
+  try {
+    await restart();
+  } catch (e) {
+    notifyError(errMsg(e), "重启失败");
   }
 }
 </script>
@@ -113,6 +181,46 @@ async function onToggleAutoStart(next: boolean) {
           <FieldDescription v-if="!supported">当前平台不支持开机自启。</FieldDescription>
           <FieldDescription v-else-if="target">登录后自动启动：{{ target }}</FieldDescription>
           <FieldDescription v-else>登录系统后自动启动 RcloneDrive（静默进入托盘）。</FieldDescription>
+        </FieldSet>
+
+        <FieldSeparator />
+
+        <FieldSet>
+          <FieldLegend variant="label">更新</FieldLegend>
+          <Field>
+            <FieldLabel>当前版本</FieldLabel>
+            <FieldDescription v-if="status">v{{ status.current }}</FieldDescription>
+            <FieldDescription v-else>—</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel>状态</FieldLabel>
+            <FieldDescription>{{ statusText }}</FieldDescription>
+            <template v-if="downloading && progress">
+              <Progress :model-value="percent" class="mt-2" />
+              <FieldDescription class="mt-1">{{ percent }}% · {{ progressText }}</FieldDescription>
+            </template>
+          </Field>
+          <Field class="flex-row items-center gap-2">
+            <Button variant="outline" :disabled="busy" @click="onCheckUpdate">
+              <Spinner v-if="busy" data-icon="inline-start" />
+              检查更新
+            </Button>
+            <AlertDialog v-model:open="confirmRestart">
+              <AlertDialogTrigger as-child>
+                <Button v-if="ready">立即重启</Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>重启以完成更新？</AlertDialogTitle>
+                  <AlertDialogDescription>重启期间所有云盘挂载会临时断开，重启完成后请重新连接。</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction @click="onRestart">重启</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </Field>
         </FieldSet>
       </FieldGroup>
     </main>

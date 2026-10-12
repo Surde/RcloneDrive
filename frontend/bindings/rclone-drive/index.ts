@@ -5,12 +5,14 @@ import * as MountService from "./mountservice.js";
 import * as RemoteService from "./remoteservice.js";
 import * as SettingsService from "./settingsservice.js";
 import * as SystemService from "./systemservice.js";
+import * as UpdateService from "./updateservice.js";
 import * as WindowService from "./windowservice.js";
 export {
     MountService,
     RemoteService,
     SettingsService,
     SystemService,
+    UpdateService,
     WindowService
 };
 
@@ -22,5 +24,6 @@ export type {
     RcloneStatus,
     Remote,
     SpeedEvent,
-    ToastEvent
+    ToastEvent,
+    UpdateStatus
 } from "./models.js";

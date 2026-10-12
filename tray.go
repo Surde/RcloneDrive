@@ -24,6 +24,7 @@ type trayManager struct {
 	remotes *RemoteService
 	mounts  *MountService
 	windows *WindowService
+	updates *UpdateService
 	menu    *application.Menu
 
 	// pendingMu 保护 pending：正在连接/断开的驱动器，用于显示进行中状态并避免重复触发。
@@ -45,13 +46,14 @@ func refreshTray() {
 	}
 }
 
-func newTrayManager(app *application.App, window *application.WebviewWindow, remotes *RemoteService, mounts *MountService, windows *WindowService) *trayManager {
+func newTrayManager(app *application.App, window *application.WebviewWindow, remotes *RemoteService, mounts *MountService, windows *WindowService, updates *UpdateService) *trayManager {
 	manager := &trayManager{
 		app:     app,
 		window:  window,
 		remotes: remotes,
 		mounts:  mounts,
 		windows: windows,
+		updates: updates,
 		pending: make(map[string]string),
 	}
 
@@ -202,16 +204,7 @@ func (t *trayManager) pendingAction(name string) string {
 }
 
 func (t *trayManager) handleCheckUpdate() {
-	result := checkUpdate()
-	if result.Status == "update" {
-		notifyUser("success", "发现新版本 v"+result.Latest, result.URL)
-		return
-	}
-	if result.Status == "error" {
-		notifyUser("error", "检查更新失败", result.Message)
-		return
-	}
-	notifyUser("success", "检查更新", result.Message)
+	t.updates.CheckManual()
 }
 
 func (t *trayManager) showWindow() {

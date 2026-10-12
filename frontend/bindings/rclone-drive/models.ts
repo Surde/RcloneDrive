@@ -82,3 +82,19 @@ export interface ToastEvent {
     "title": string;
     "body": string;
 }
+
+/**
+ * UpdateStatus 描述当前更新状态，随 update:* 事件推给前端，也是 Status() 的返回。
+ */
+export interface UpdateStatus {
+    "current": string;
+
+    /**
+     * updater.State：idle/checking/available/downloading/ready/error 等
+     */
+    "state": string;
+    "latest"?: string;
+    "notes"?: string;
+    "url"?: string;
+    "downloaded": boolean;
+}

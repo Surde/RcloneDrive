@@ -28,6 +28,7 @@ func main() {
 	remoteService := NewRemoteService(mountManager)
 	mountService := NewMountService(remoteService, mountManager)
 	windowService := NewWindowService()
+	updateService := NewUpdateService()
 
 	// --tray：开机自启时静默启动到托盘，不弹出窗口
 	startHidden := slices.Contains(os.Args[1:], trayFlag)
@@ -41,6 +42,7 @@ func main() {
 			application.NewService(&SystemService{}),
 			application.NewService(&SettingsService{}),
 			application.NewService(windowService),
+			application.NewService(updateService),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -78,7 +80,7 @@ func main() {
 	// 提示走 toast 还是系统通知，取决于主窗口是否可见（见 notifyUser）
 	mainWindow = window
 
-	trayHolder := newTrayManager(app, window, remoteService, mountService, windowService)
+	trayHolder := newTrayManager(app, window, remoteService, mountService, windowService, updateService)
 	remoteService.OnChange(trayHolder.refresh)
 	// 子窗口收尾时需要唤起主窗口（新增驱动器关闭后显示主界面）
 	windowService.setMainWindow(window)

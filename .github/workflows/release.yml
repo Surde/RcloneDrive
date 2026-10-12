@@ -114,16 +114,20 @@ jobs:
           install: mingw-w64-ucrt-x86_64-gcc
 
       # setup-msys2 在 runner 镜像上的实际安装位置不固定（可能不在 C:\msys64），
-      # 不能硬编码 MINGW_GCC；装完后动态解析真实路径供 cgo / WinFsp 预检使用。
+      # 不能硬编码 MINGW_GCC；装完后解析真实路径供 cgo / WinFsp 预检使用。
+      # 注意 runner 镜像自带多个 gcc（C:\mingw64、Strawberry Perl 等），
+      # 必须只取明确路径或 PATH 第一个，否则多值按空格拼接会毁掉 cgo 的 CC。
       - name: 解析 MinGW gcc 路径
         shell: pwsh
         run: |
-          $gcc = (Get-Command gcc -CommandType Application -ErrorAction SilentlyContinue).Source
+          $gcc = $null
+          foreach ($root in @("C:\msys64", "$env:RUNNER_TEMP\msys64", "$env:RUNNER_TEMP\msys\msys64")) {
+            $candidate = Join-Path $root "ucrt64\bin\gcc.exe"
+            if (Test-Path $candidate) { $gcc = $candidate; break }
+          }
           if (-not $gcc) {
-            foreach ($root in @("C:\msys64", "$env:RUNNER_TEMP\msys64", "$env:RUNNER_TEMP\msys\msys64")) {
-              $candidate = Join-Path $root "ucrt64\bin\gcc.exe"
-              if (Test-Path $candidate) { $gcc = $candidate; break }
-            }
+            $gcc = Get-Command gcc -CommandType Application -ErrorAction SilentlyContinue |
+                   Select-Object -First 1 -ExpandProperty Source
           }
           if (-not $gcc) { throw "未找到 MinGW gcc（msys2 安装位置异常）" }
           echo "MINGW_GCC=$gcc" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
@@ -238,7 +242,9 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       APP_VERSION: ${{ needs.prepare.outputs.version }}
-      EXTRA_TAGS: cmount
+      # cmount 需要 cgofuse；cgofuse 在 Linux 上按 fuse3 标签使用 /usr/include/fuse3 头文件，
+      # 不带 fuse3 会去找 fuse2 头文件，缺失时可能误命中 WinFsp 头文件导致编译失败。
+      EXTRA_TAGS: "cmount,fuse3"
     steps:
       - uses: actions/checkout@v4
 

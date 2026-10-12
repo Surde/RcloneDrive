@@ -12,6 +12,7 @@
     <a href="#install"><img src="https://img.shields.io/badge/Platform-Windows_·_macOS_·_Linux-F2C9A0?style=for-the-badge&labelColor=7E5A28" alt="Windows · macOS · Linux"></a>
   </p>
   <p>
+    <a href="#screenshots">应用截图</a> ·
     <a href="#drives">虚拟驱动器</a> ·
     <a href="#manage">驱动器管理</a> ·
     <a href="#tray">托盘与通知</a> ·
@@ -38,6 +39,32 @@ rclone 以 Go 依赖库的形式接入（`github.com/rclone/rclone`），既不�
 关闭主窗口只是隐藏到托盘，挂载与传输继续在后台运行。托盘菜单实时显示每台驱动器的连接状态，随时可以连接、断开或编辑。挂载断开、检查更新等后台事件使用系统原生通知；同一时间只运行一个实例。
 
 <br/>
+
+<a id="screenshots"></a>
+
+## 📷 应用截图
+
+<div align="center">
+
+<p><strong>主界面</strong> —— 卡片列出全部虚拟驱动器，显示协议、挂载状态与盘符，已挂载的卡片还会显示容量与可用空间；卡片右侧可直接打开挂载目录、挂载 / 断开、编辑与删除</p>
+
+<img src="./examples/mount.png" width="560" alt="主界面" />
+
+<br/>
+<br/>
+
+<p><strong>新增虚拟驱动器</strong> —— 左侧是按用途分组的连接类型树（可搜索），右侧按「基本 / 高级 / 说明」三个 tab 填写配置，底部可「测试连接」「保存」或直接「保存并连接」</p>
+
+<img src="./examples/drivers.png" width="560" alt="新增虚拟驱动器" />
+
+<br/>
+<br/>
+
+<p><strong>设置</strong> —— 主题（跟随系统 / 浅色 / 深色）与开机自启</p>
+
+<img src="./examples/settings.png" width="560" alt="设置" />
+
+</div>
 
 <a id="drives"></a>
 

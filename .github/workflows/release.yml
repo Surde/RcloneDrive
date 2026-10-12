@@ -237,9 +237,18 @@ jobs:
           if-no-files-found: error
 
   linux:
-    name: Linux 安装包
+    name: Linux 安装包 (${{ matrix.arch }})
     needs: prepare
-    runs-on: ubuntu-24.04
+    # arm64 使用 GitHub 免费提供的原生 arm  runner，避免交叉编译 cgo 的麻烦
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     env:
       APP_VERSION: ${{ needs.prepare.outputs.version }}
       # cmount 需要 cgofuse；cgofuse 在 Linux 上按 fuse3 标签使用 /usr/include/fuse3 头文件，
@@ -293,22 +302,30 @@ jobs:
             -config build/config.yml -productversion "${APP_VERSION}" -dir build
 
       - name: 构建并打包
-        run: task package
+        run: task package ARCH=${{ matrix.arch }}
 
+      # 产物统一命名为 RcloneDrive-<版本>-linux-<架构>.<格式>，
+      # 与 Windows/macOS 产物命名规范一致（AppImage 用 x86_64/aarch64 惯例，包用 amd64/arm64）。
       - name: 收集产物
         run: |
           set -euo pipefail
           shopt -s nullglob
           mkdir -p dist
-          for f in bin/*.AppImage bin/*.deb bin/*.rpm bin/*.pkg.tar.zst bin/*.tar.zst; do
-            cp "$f" dist/
-          done
+          case "${{ matrix.arch }}" in
+            amd64) apparch=x86_64; pkgarch=amd64 ;;
+            arm64) apparch=aarch64; pkgarch=arm64 ;;
+            *) echo "::error::未知架构 ${{ matrix.arch }}"; exit 1 ;;
+          esac
+          for f in bin/*.AppImage; do cp "$f" "dist/RcloneDrive-${APP_VERSION}-linux-${apparch}.AppImage"; done
+          for f in bin/*.deb; do cp "$f" "dist/RcloneDrive-${APP_VERSION}-linux-${pkgarch}.deb"; done
+          for f in bin/*.rpm; do cp "$f" "dist/RcloneDrive-${APP_VERSION}-linux-${pkgarch}.rpm"; done
+          for f in bin/*.pkg.tar.zst bin/*.tar.zst; do cp "$f" "dist/RcloneDrive-${APP_VERSION}-linux-${pkgarch}.pkg.tar.zst"; done
           ls -l dist
           test -n "$(ls -A dist)"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: linux
+          name: linux-${{ matrix.arch }}
           path: dist/*
           if-no-files-found: error
 

@@ -113,6 +113,23 @@ jobs:
           update: false
           install: mingw-w64-ucrt-x86_64-gcc
 
+      # setup-msys2 在 runner 镜像上的实际安装位置不固定（可能不在 C:\msys64），
+      # 不能硬编码 MINGW_GCC；装完后动态解析真实路径供 cgo / WinFsp 预检使用。
+      - name: 解析 MinGW gcc 路径
+        shell: pwsh
+        run: |
+          $gcc = (Get-Command gcc -CommandType Application -ErrorAction SilentlyContinue).Source
+          if (-not $gcc) {
+            foreach ($root in @("C:\msys64", "$env:RUNNER_TEMP\msys64", "$env:RUNNER_TEMP\msys\msys64")) {
+              $candidate = Join-Path $root "ucrt64\bin\gcc.exe"
+              if (Test-Path $candidate) { $gcc = $candidate; break }
+            }
+          }
+          if (-not $gcc) { throw "未找到 MinGW gcc（msys2 安装位置异常）" }
+          echo "MINGW_GCC=$gcc" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $gcc)
+          echo "gcc resolved to: $gcc"
+
       - name: 安装 NSIS
         shell: pwsh
         run: |
@@ -129,8 +146,6 @@ jobs:
 
       - name: 构建并打包
         shell: bash
-        env:
-          MINGW_GCC: C:\msys64\ucrt64\bin\gcc.exe
         run: task package
 
       - name: 收集产物

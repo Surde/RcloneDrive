@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
-import { ChevronDown, Search } from "@lucide/vue";
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { ChevronDown, CircleHelp, Search } from "@lucide/vue";
 import { Events, Window } from "@wailsio/runtime";
 import type { Field as RcloneField } from "../../bindings/rclone-drive/internal/rclone/models";
 import type { BackendGroup, BackendType } from "../../bindings/rclone-drive/internal/rclone/models";
@@ -22,6 +22,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTheme } from "../composables/useTheme";
 
 // 编辑模式由窗口 URL 决定：#/drive?edit=<名称>
@@ -84,10 +85,79 @@ function providerMatches(filter: string, provider: string): boolean {
 
 const visibleFields = computed(() => {
   const provider = (options.value.provider ?? "").toLowerCase();
-  return fields.value.filter((field) => !field.provider || providerMatches(field.provider, provider));
+  return fields.value.filter((field) => {
+    // webdav 的 url / 服务商 / 用户名 / 密码由组合行单独渲染（见下方模板），不走通用渲染
+    if (selectedType.value === "webdav" && ["url", "vendor", "user", "pass"].includes(field.key)) return false;
+    return !field.provider || providerMatches(field.provider, provider);
+  });
 });
 const basicFields = computed(() => visibleFields.value.filter((f) => !f.advanced));
 const advancedFields = computed(() => visibleFields.value.filter((f) => f.advanced));
+
+// WebDAV：url 拆成 协议 / 地址 / 端口 三列，组合值仍写入 options.url，
+// 校验、保存、测试连接沿用原有 url 字段的逻辑
+const webdavProtocol = ref<"http" | "https">("http");
+const webdavHost = ref("");
+const webdavPort = ref("80");
+
+const webdavUrlField = computed(() => fields.value.find((f) => f.key === "url"));
+
+const webdavVendorField = computed(() => fields.value.find((f) => f.key === "vendor"));
+
+// 服务商选项的 Label 由后端翻译为简短中文（value 仍是写入配置的标识符）
+const webdavVendorOptions = computed(() => webdavVendorField.value?.examples ?? []);
+
+const webdavUserField = computed(() => fields.value.find((f) => f.key === "user"));
+const webdavPassField = computed(() => fields.value.find((f) => f.key === "pass"));
+
+function setOption(key: string, value: unknown) {
+  options.value = { ...options.value, [key]: value == null ? "" : String(value) };
+}
+
+function defaultWebdavPort(protocol: string) {
+  return protocol === "https" ? "443" : "80";
+}
+
+function splitWebdavUrl(url: string) {
+  if (!url) {
+    webdavProtocol.value = "http";
+    webdavHost.value = "";
+    webdavPort.value = "80";
+    return;
+  }
+  try {
+    const u = new URL(url);
+    const protocol: "http" | "https" = u.protocol === "https:" ? "https" : "http";
+    webdavProtocol.value = protocol;
+    webdavHost.value = u.hostname;
+    webdavPort.value = u.port || defaultWebdavPort(protocol);
+  } catch {
+    webdavProtocol.value = "http";
+    webdavHost.value = url;
+    webdavPort.value = "80";
+  }
+}
+
+function joinWebdavUrl(): string {
+  const host = webdavHost.value.trim();
+  if (!host) return "";
+  const port = webdavPort.value.trim() || defaultWebdavPort(webdavProtocol.value);
+  return `${webdavProtocol.value}://${host}:${port}`;
+}
+
+function onWebdavProtocol(next: "http" | "https") {
+  const prev = webdavProtocol.value;
+  webdavProtocol.value = next;
+  // 端口未手动填写、或仍是旧协议的默认值时，跟随协议切换默认端口
+  if (!webdavPort.value.trim() || webdavPort.value === defaultWebdavPort(prev)) {
+    webdavPort.value = defaultWebdavPort(next);
+  }
+}
+
+watch([webdavProtocol, webdavHost, webdavPort], () => {
+  if (selectedType.value !== "webdav") return;
+  options.value = { ...options.value, url: joinWebdavUrl() };
+});
 
 const driveLetters = computed(() => {
   // 已被系统占用的盘符，以及分配给其他驱动器的盘符，都不再出现在下拉框里
@@ -132,6 +202,7 @@ function resetForm() {
   if (!editing.value && driveLetters.value.length > 0 && !driveLetters.value.includes(mountPoint.value)) {
     mountPoint.value = driveLetters.value[0];
   }
+  if (selectedType.value === "webdav") splitWebdavUrl(options.value.url ?? "");
 }
 
 function fillFrom(remote: Remote) {
@@ -147,6 +218,7 @@ function fillFrom(remote: Remote) {
     if (value !== undefined) opts[key] = value;
   }
   options.value = opts;
+  splitWebdavUrl(opts.url ?? "");
 }
 
 async function loadFields(typ: string) {
@@ -425,6 +497,7 @@ function onCancel() {
 
       <!-- 右侧：配置 -->
       <section class="flex min-w-0 flex-1 flex-col">
+        <TooltipProvider>
         <div class="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
           <ProtocolIcon :type="selectedType" class="size-4 shrink-0" />
           <span class="truncate text-sm font-medium">{{ currentType?.label ?? selectedType }}</span>
@@ -444,7 +517,17 @@ function onCancel() {
             <TabsContent value="basic">
               <FieldGroup>
                 <Field :data-invalid="isInvalid('__name')" :data-disabled="editing">
-                  <FieldLabel for="drive-name">名称</FieldLabel>
+                  <FieldLabel for="drive-name" class="flex items-center gap-1.5">
+                    名称
+                    <Tooltip v-if="!isInvalid('__name') && editing">
+                      <TooltipTrigger as-child>
+                        <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+                          <CircleHelp class="size-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" class="max-w-56">编辑模式下名称不可修改。</TooltipContent>
+                    </Tooltip>
+                  </FieldLabel>
                   <Input
                     id="drive-name"
                     v-model="name"
@@ -453,27 +536,52 @@ function onCancel() {
                     placeholder="我的网盘"
                   />
                   <FieldDescription v-if="isInvalid('__name')">请输入驱动器名称。</FieldDescription>
-                  <FieldDescription v-else-if="editing">编辑模式下名称不可修改。</FieldDescription>
                 </Field>
 
-                <Field>
-                  <FieldLabel for="drive-letter">盘符</FieldLabel>
-                  <Select v-model="mountPoint">
-                    <SelectTrigger id="drive-letter">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        <SelectItem v-for="letter in driveLetters" :key="letter" :value="letter">
-                          {{ letter }}
+                <div class="flex items-start gap-2">
+                  <Field :class="selectedType === 'webdav' ? 'w-28 shrink-0' : 'min-w-0 flex-1'">
+                    <FieldLabel for="drive-letter">盘符</FieldLabel>
+                    <Select v-model="mountPoint">
+                      <SelectTrigger id="drive-letter">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem v-for="letter in driveLetters" :key="letter" :value="letter">
+                            {{ letter }}
+                          </SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+
+                  <Field v-if="selectedType === 'webdav'" class="min-w-0 flex-1">
+                    <FieldLabel for="drive-vendor" class="flex items-center gap-1.5">
+                      服务商
+                      <Tooltip v-if="webdavVendorField?.help">
+                        <TooltipTrigger as-child>
+                          <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+                            <CircleHelp class="size-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" class="max-w-56 whitespace-pre-line">{{ webdavVendorField.help }}</TooltipContent>
+                      </Tooltip>
+                    </FieldLabel>
+                    <Select :model-value="options.vendor ?? ''" @update:model-value="setOption('vendor', $event)">
+                      <SelectTrigger id="drive-vendor">
+                        <SelectValue placeholder="选择服务商" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem v-for="opt in webdavVendorOptions" :key="opt.value" :value="opt.value">
+                          {{ opt.label }}
                         </SelectItem>
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </Field>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </div>
 
-                <FieldSet>
-                  <Field orientation="horizontal">
+                <FieldSet class="flex-row flex-wrap items-center gap-x-5 gap-y-2">
+                  <Field orientation="horizontal" class="w-auto">
                     <Checkbox
                       id="drive-autoconnect"
                       :model-value="autoConnect"
@@ -481,7 +589,7 @@ function onCancel() {
                     />
                     <FieldLabel for="drive-autoconnect" class="font-normal">自动连接</FieldLabel>
                   </Field>
-                  <Field orientation="horizontal">
+                  <Field orientation="horizontal" class="w-auto">
                     <Checkbox
                       id="drive-readonly"
                       :model-value="readOnly"
@@ -489,18 +597,75 @@ function onCancel() {
                     />
                     <FieldLabel for="drive-readonly" class="font-normal">只读模式</FieldLabel>
                   </Field>
-                  <Field orientation="horizontal">
+                  <Field orientation="horizontal" class="w-auto">
                     <Checkbox
                       id="drive-insecure"
                       :model-value="insecure"
                       @update:model-value="insecure = $event === true"
                     />
-                    <FieldLabel for="drive-insecure" class="font-normal">忽略证书错误</FieldLabel>
-                    <FieldDescription class="text-xs">自签名证书的 HTTPS 服务器无法校验证书时勾选</FieldDescription>
+                    <FieldLabel for="drive-insecure" class="flex items-center gap-1.5 font-normal">
+                      忽略证书错误
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+                            <CircleHelp class="size-3.5" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" class="max-w-56">自签名证书的 HTTPS 服务器无法校验证书时勾选</TooltipContent>
+                      </Tooltip>
+                    </FieldLabel>
                   </Field>
                 </FieldSet>
 
                 <FieldSeparator>连接设置</FieldSeparator>
+
+                <Field v-if="selectedType === 'webdav'" :data-invalid="isInvalid('url')">
+                  <FieldLabel class="flex items-center gap-1.5">
+                    地址
+                    <Tooltip v-if="!isInvalid('url') && webdavUrlField?.help">
+                      <TooltipTrigger as-child>
+                        <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+                          <CircleHelp class="size-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" class="max-w-56 whitespace-pre-line">{{ webdavUrlField.help }}</TooltipContent>
+                    </Tooltip>
+                  </FieldLabel>
+                  <div class="flex items-center gap-2">
+                    <Select :model-value="webdavProtocol" @update:model-value="onWebdavProtocol($event as 'http' | 'https')">
+                      <SelectTrigger class="w-28" aria-label="协议">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="http">http</SelectItem>
+                        <SelectItem value="https">https</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input v-model="webdavHost" placeholder="IP / 域名" class="min-w-0 flex-1" aria-label="地址" />
+                    <Input v-model="webdavPort" placeholder="端口" class="w-20" aria-label="端口" />
+                  </div>
+                  <FieldDescription v-if="isInvalid('url')">请填写完整的地址信息。</FieldDescription>
+                </Field>
+
+                <div v-if="selectedType === 'webdav' && webdavUserField && webdavPassField" class="flex items-start gap-2">
+                  <div class="min-w-0 flex-1">
+                    <DriveField
+                      v-model="options.user"
+                      :field="webdavUserField"
+                      :scope="`drive-${selectedType}-basic`"
+                      :invalid="Boolean(isInvalid('user'))"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <DriveField
+                      v-model="options.pass"
+                      :field="webdavPassField"
+                      :scope="`drive-${selectedType}-basic`"
+                      :invalid="Boolean(isInvalid('pass'))"
+                    />
+                  </div>
+                </div>
+
                 <DriveField
                   v-for="field in basicFields"
                   :key="field.key"
@@ -550,6 +715,7 @@ function onCancel() {
             </TabsContent>
           </div>
         </Tabs>
+        </TooltipProvider>
       </section>
     </div>
 

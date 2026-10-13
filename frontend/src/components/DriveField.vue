@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { Field as RcloneField } from "../../bindings/rclone-drive/internal/rclone/models";
+import { CircleHelp } from "@lucide/vue";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 // 按 rclone 的字段元数据渲染一个配置项：bool → 复选框，枚举 → 下拉，密码 → 密码框，其余 → 文本框
 const props = defineProps<{
@@ -19,7 +21,17 @@ const inputId = `${props.scope}-${props.field.key}`;
 
 <template>
   <Field :data-invalid="invalid">
-    <FieldLabel :for="inputId">{{ field.label }}</FieldLabel>
+    <FieldLabel :for="inputId" class="flex items-center gap-1.5">
+      {{ field.label }}
+      <Tooltip v-if="!invalid && field.help">
+        <TooltipTrigger as-child>
+          <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+            <CircleHelp class="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" class="max-w-56 whitespace-pre-line">{{ field.help }}</TooltipContent>
+      </Tooltip>
+    </FieldLabel>
 
     <Checkbox
       v-if="field.type === 'bool'"
@@ -53,6 +65,5 @@ const inputId = `${props.scope}-${props.field.key}`;
     />
 
     <FieldDescription v-if="invalid">此字段为必填项。</FieldDescription>
-    <FieldDescription v-else-if="field.help" class="whitespace-pre-line">{{ field.help }}</FieldDescription>
   </Field>
 </template>

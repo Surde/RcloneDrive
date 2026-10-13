@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Monitor, Moon, Sun } from "@lucide/vue";
+import { ArrowUpCircle, CircleHelp, Monitor, Moon, Palette, Power, Sun } from "@lucide/vue";
 import * as SettingsService from "../../bindings/rclone-drive/settingsservice";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { formatSize, formatSpeed } from "@/lib/format";
 import WindowBar from "../components/WindowBar.vue";
 import { useTheme, type ThemeMode } from "../composables/useTheme";
 import { useUpdate } from "../composables/useUpdate";
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSeparator, FieldSet } from "@/components/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/sonner";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,6 +28,16 @@ import {
 } from "@/components/ui/alert-dialog";
 
 const { mode, isDark, setMode } = useTheme();
+
+type SectionKey = "appearance" | "startup" | "update";
+
+const sections: { key: SectionKey; label: string; icon: typeof Palette }[] = [
+  { key: "appearance", label: "外观", icon: Palette },
+  { key: "startup", label: "启动", icon: Power },
+  { key: "update", label: "更新", icon: ArrowUpCircle },
+];
+
+const section = ref<SectionKey>("appearance");
 
 const themeOptions = [
   { value: "light" as ThemeMode, label: "浅色", icon: Sun },
@@ -76,6 +87,12 @@ async function onToggleAutoStart(next: boolean) {
     saving.value = false;
   }
 }
+
+const autoStartHint = computed(() => {
+  if (!supported.value) return "当前平台不支持开机自启。";
+  if (target.value) return `登录后自动启动：${target.value}`;
+  return "登录系统后自动启动 RcloneDrive（静默进入托盘）。";
+});
 
 const { status, progress, error, busy, ready, downloading, check, restart } = useUpdate();
 
@@ -135,95 +152,125 @@ async function onRestart() {
   <div class="bg-background flex h-screen flex-col">
     <WindowBar title="设置" subtitle="调整界面外观与启动方式" />
 
-    <main class="flex-1 overflow-y-auto p-4">
-      <FieldGroup>
-        <FieldSet>
-          <FieldLegend variant="label">外观</FieldLegend>
-          <Field>
-            <FieldLabel for="theme-mode">主题</FieldLabel>
-            <ToggleGroup
-              id="theme-mode"
-              :model-value="mode"
-              type="single"
-              variant="outline"
-              :spacing="2"
-              class="grid w-full grid-cols-3"
-              @update:model-value="setMode($event as ThemeMode)"
-            >
-              <ToggleGroupItem
-                v-for="option in themeOptions"
-                :key="option.value"
-                :value="option.value"
-                class="gap-2 data-[state=on]:ring-ring data-[state=on]:ring-2"
-              >
-                <component :is="option.icon" />
-                {{ option.label }}
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <FieldDescription>「跟随系统」会随操作系统的深浅色设置自动切换。</FieldDescription>
-          </Field>
-        </FieldSet>
+    <div class="flex min-h-0 flex-1">
+      <aside class="w-35 shrink-0 space-y-1 border-r p-3">
+        <button
+          v-for="item in sections"
+          :key="item.key"
+          type="button"
+          :data-active="section === item.key"
+          class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground data-[active=true]:bg-accent data-[active=true]:font-medium data-[active=true]:text-accent-foreground"
+          @click="section = item.key"
+        >
+          <component :is="item.icon" class="size-4" />
+          {{ item.label }}
+        </button>
+      </aside>
 
-        <FieldSeparator />
+      <main class="flex-1 overflow-y-auto p-4">
+        <TooltipProvider>
+          <FieldGroup>
+            <FieldSet v-if="section === 'appearance'">
+              <FieldLegend variant="label">外观</FieldLegend>
+              <Field>
+                <FieldLabel for="theme-mode" class="flex items-center gap-1.5">
+                  主题
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+                        <CircleHelp class="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" class="max-w-56">「跟随系统」会随操作系统的深浅色设置自动切换。</TooltipContent>
+                  </Tooltip>
+                </FieldLabel>
+                <ToggleGroup
+                  id="theme-mode"
+                  :model-value="mode"
+                  type="single"
+                  variant="outline"
+                  :spacing="2"
+                  class="grid w-full grid-cols-3"
+                  @update:model-value="setMode($event as ThemeMode)"
+                >
+                  <ToggleGroupItem
+                    v-for="option in themeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                    class="gap-2 data-[state=on]:ring-ring data-[state=on]:ring-2"
+                  >
+                    <component :is="option.icon" />
+                    {{ option.label }}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </Field>
+            </FieldSet>
 
-        <FieldSet>
-          <FieldLegend variant="label">启动</FieldLegend>
-          <Field orientation="horizontal" :data-disabled="!supported">
-            <Switch
-              id="settings-autostart"
-              :model-value="autoStart"
-              :disabled="!supported || loading || saving"
-              @update:model-value="onToggleAutoStart"
-            />
-            <FieldLabel for="settings-autostart" class="font-normal">开机自启</FieldLabel>
-            <Spinner v-if="loading || saving" />
-          </Field>
-          <FieldDescription v-if="!supported">当前平台不支持开机自启。</FieldDescription>
-          <FieldDescription v-else-if="target">登录后自动启动：{{ target }}</FieldDescription>
-          <FieldDescription v-else>登录系统后自动启动 RcloneDrive（静默进入托盘）。</FieldDescription>
-        </FieldSet>
+            <FieldSet v-if="section === 'startup'">
+              <FieldLegend variant="label">启动</FieldLegend>
+              <Field orientation="horizontal" :data-disabled="!supported">
+                <Switch
+                  id="settings-autostart"
+                  :model-value="autoStart"
+                  :disabled="!supported || loading || saving"
+                  @update:model-value="onToggleAutoStart"
+                />
+                <FieldLabel for="settings-autostart" class="flex items-center gap-1.5 font-normal">
+                  开机自启
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+                        <CircleHelp class="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" class="max-w-56">{{ autoStartHint }}</TooltipContent>
+                  </Tooltip>
+                </FieldLabel>
+                <Spinner v-if="loading || saving" />
+              </Field>
+            </FieldSet>
 
-        <FieldSeparator />
-
-        <FieldSet>
-          <FieldLegend variant="label">更新</FieldLegend>
-          <Field>
-            <FieldLabel>当前版本</FieldLabel>
-            <FieldDescription v-if="status">v{{ status.current }}</FieldDescription>
-            <FieldDescription v-else>—</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel>状态</FieldLabel>
-            <FieldDescription>{{ statusText }}</FieldDescription>
-            <template v-if="downloading && progress">
-              <Progress :model-value="percent" class="mt-2" />
-              <FieldDescription class="mt-1">{{ percent }}% · {{ progressText }}</FieldDescription>
-            </template>
-          </Field>
-          <Field class="flex-row items-center gap-2">
-            <Button variant="outline" :disabled="busy" @click="onCheckUpdate">
-              <Spinner v-if="busy" data-icon="inline-start" />
-              检查更新
-            </Button>
-            <AlertDialog v-model:open="confirmRestart">
-              <AlertDialogTrigger as-child>
-                <Button v-if="ready">立即重启</Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>重启以完成更新？</AlertDialogTitle>
-                  <AlertDialogDescription>重启期间所有云盘挂载会临时断开，重启完成后请重新连接。</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>取消</AlertDialogCancel>
-                  <AlertDialogAction @click="onRestart">重启</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </Field>
-        </FieldSet>
-      </FieldGroup>
-    </main>
+            <FieldSet v-if="section === 'update'">
+              <FieldLegend variant="label">更新</FieldLegend>
+              <Field>
+                <FieldLabel>当前版本</FieldLabel>
+                <FieldDescription v-if="status">v{{ status.current }}</FieldDescription>
+                <FieldDescription v-else>—</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel>状态</FieldLabel>
+                <FieldDescription>{{ statusText }}</FieldDescription>
+                <template v-if="downloading && progress">
+                  <Progress :model-value="percent" class="mt-2" />
+                  <FieldDescription class="mt-1">{{ percent }}% · {{ progressText }}</FieldDescription>
+                </template>
+              </Field>
+              <Field class="flex-row flex-wrap items-center gap-2">
+                <Button variant="outline" :disabled="busy" @click="onCheckUpdate">
+                  <Spinner v-if="busy" data-icon="inline-start" />
+                  检查更新
+                </Button>
+                <AlertDialog v-model:open="confirmRestart">
+                  <AlertDialogTrigger as-child>
+                    <Button v-if="ready">立即重启</Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>重启以完成更新？</AlertDialogTitle>
+                      <AlertDialogDescription>重启期间所有云盘挂载会临时断开，重启完成后请重新连接。</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction @click="onRestart">重启</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </Field>
+            </FieldSet>
+          </FieldGroup>
+        </TooltipProvider>
+      </main>
+    </div>
 
     <Toaster :theme="isDark ? 'dark' : 'light'" position="top-center" />
   </div>

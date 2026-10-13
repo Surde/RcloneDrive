@@ -216,10 +216,30 @@ jobs:
           wails3 update build-assets -name "${APP_NAME}" -binaryname "${APP_NAME}" \
             -config build/config.yml -productversion "${APP_VERSION}" -dir build
 
+      # hdiutil detach 偶发 "No such file or directory"：mds（Spotlight）索引
+      # DMG 挂载卷会把挂载点踢掉，leaanthony/dmg 重试 5 次也救不回来。
+      # 打包前关掉全局索引，并对 DMG 构建整体重试，规避 CI runner 上的已知抖动。
+      - name: 关闭 Spotlight 索引
+        run: sudo mdutil -a -i off
+
       - name: 构建并打包（通用包 + dmg）
+        shell: bash
         run: |
+          set -euo pipefail
           task darwin:package:universal
-          task darwin:create:dmg
+          ok=false
+          for attempt in 1 2 3; do
+            if task darwin:create:dmg; then
+              ok=true
+              break
+            fi
+            echo "::warning::DMG 构建第 ${attempt} 次尝试失败，5s 后重试"
+            sleep 5
+          done
+          if [ "${ok}" != "true" ]; then
+            echo "::error::DMG 构建连续 3 次失败"
+            exit 1
+          fi
 
       - name: 收集产物
         run: |

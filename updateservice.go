@@ -63,7 +63,13 @@ func NewUpdateService() *UpdateService {
 }
 
 // ServiceStartup 初始化 updater 并订阅其生命周期事件。
+// 开发构建不初始化 updater（见 autoupdate_dev.go），不做任何自动/手动更新。
 func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceOptions) error {
+	if !autoUpdateEnabled {
+		log.Printf("开发构建：自动更新已禁用")
+		return nil
+	}
+
 	s.app = application.Get()
 	if s.app == nil {
 		return nil
@@ -179,6 +185,10 @@ func (s *UpdateService) Status() UpdateStatus {
 // 用户主动触发时给出明确反馈：无更新、出错都会通知；发现新版本则由
 // 事件处理器通知并自动下载。Check 是同步的，返回时状态已确定。
 func (s *UpdateService) CheckManual() {
+	if !autoUpdateEnabled {
+		log.Printf("开发构建：跳过手动检查更新")
+		return
+	}
 	if s.app == nil || s.app.Updater == nil {
 		return
 	}

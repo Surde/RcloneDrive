@@ -10,6 +10,7 @@ import (
 
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configfile"
+	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/rc"
 )
 
@@ -35,7 +36,7 @@ var (
 // Ensure 让内嵌的 rclone 使用本应用的配置文件，只初始化一次。
 func Ensure() error {
 	ensureOnce.Do(func() {
-		if err := os.MkdirAll(ConfigDir(), 0o755); err != nil {
+		if err := os.MkdirAll(ConfigDir(), 0o700); err != nil {
 			ensureErr = fmt.Errorf("创建配置目录失败: %w", err)
 			return
 		}
@@ -95,6 +96,43 @@ func SaveRemote(name, typ string, options map[string]string) error {
 		return fmt.Errorf("保存 rclone 配置失败: %w", err)
 	}
 	return nil
+}
+
+// ReadRemote 从配置文件读取某个远程存储的全部选项，密码字段由 rclone 混淆态解密回明文。
+// remotes.json 不再保存 Options（避免凭证明文落盘），编辑远程时用它来回填表单。
+// 与 rclone 写配置的逻辑一致：Reveal 失败说明存的是明文，原样返回。
+func ReadRemote(name string) (map[string]string, error) {
+	if err := Ensure(); err != nil {
+		return nil, err
+	}
+	data := config.LoadedData()
+	if !data.HasSection(name) {
+		return nil, fmt.Errorf("远程存储不存在: %s", name)
+	}
+	passwordKeys := map[string]bool{}
+	if typ, _ := data.GetValue(name, "type"); typ != "" {
+		if fields, err := Fields(typ); err == nil {
+			for _, field := range fields {
+				if field.Password {
+					passwordKeys[field.Key] = true
+				}
+			}
+		}
+	}
+	options := map[string]string{}
+	for _, key := range data.GetKeyList(name) {
+		if key == "type" {
+			continue
+		}
+		value, _ := data.GetValue(name, key)
+		if passwordKeys[key] {
+			if revealed, err := obscure.Reveal(value); err == nil {
+				value = revealed
+			}
+		}
+		options[key] = value
+	}
+	return options, nil
 }
 
 // DeleteRemote 从配置文件中移除一个远程。

@@ -1,9 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,6 +47,9 @@ type UpdateStatus struct {
 	Notes      string `json:"notes,omitempty"`
 	URL        string `json:"url,omitempty"`
 	Downloaded bool   `json:"downloaded"`
+	// Verified 为 true 表示已下载的二进制与 release 公布的 SHA-256 二次校验一致，
+	// 此时才允许重启生效；false 时「立即重启」不可用。
+	Verified bool `json:"verified"`
 }
 
 // UpdateErrorEvent 是 update:error 事件的负载。
@@ -51,8 +60,10 @@ type UpdateErrorEvent struct {
 
 // UpdateService 封装 Wails updater：GitHub Releases 为更新源，
 // 发现新版本后自动下载安装，重启由用户确认（见事件处理）。
+// 自动检查默认关闭，仅在用户在设置中开启后才启动；手动「检查更新」始终可用。
 type UpdateService struct {
-	app *application.App
+	app      *application.App
+	settings *SettingsService
 
 	mu       sync.Mutex
 	release  *updater.Release // 最近一次发现的新版本
@@ -60,11 +71,13 @@ type UpdateService struct {
 
 	// autoStarted 防止重复自动下载（周期检查与手动检查可能同时命中可用事件）。
 	autoStarted atomic.Bool
+	// verified 记录最近一次下载完成后的二次校验结果，Restart 据此放行。
+	verified atomic.Bool
 }
 
 // NewUpdateService 创建更新服务。
-func NewUpdateService() *UpdateService {
-	return &UpdateService{}
+func NewUpdateService(settings *SettingsService) *UpdateService {
+	return &UpdateService{settings: settings}
 }
 
 // ServiceStartup 初始化 updater 并订阅其生命周期事件。
@@ -96,7 +109,9 @@ func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceO
 	err = s.app.Updater.Init(updater.Config{
 		CurrentVersion: appVersion,
 		Providers:      []updater.Provider{gh},
-		CheckInterval:  updateCheckInterval,
+		// CheckInterval 置 0：周期检查由本服务按「自动更新」设置自行调度，
+		// 设置关闭时不做任何网络检查。
+		CheckInterval: 0,
 	})
 	if err != nil {
 		log.Printf("更新器初始化失败: %v", err)
@@ -104,8 +119,35 @@ func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceO
 	}
 
 	s.subscribe()
-	go s.checkOnStartup()
+	go s.autoCheckLoop()
 	return nil
+}
+
+// autoCheckLoop 按固定周期复查更新；每次 tick 重新读设置，
+// 用户在设置里开关自动更新后无需重启即生效。
+func (s *UpdateService) autoCheckLoop() {
+	// 启动后稍等片刻做第一次检查（不拖慢启动，也让网络就绪）；后台检查保持静默
+	time.Sleep(10 * time.Second)
+	if s.settings.AutoUpdate() {
+		s.checkBackground()
+	}
+	ticker := time.NewTicker(updateCheckInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if s.settings.AutoUpdate() {
+			s.checkBackground()
+		}
+	}
+}
+
+// checkBackground 静默检查：有更新才通知，已是最新不打扰。
+func (s *UpdateService) checkBackground() {
+	if s.app == nil || s.app.Updater == nil {
+		return
+	}
+	if _, err := s.app.Updater.Check(context.Background()); err != nil {
+		log.Printf("检查更新失败: %v", err)
+	}
 }
 
 // subscribe 把 updater 的生命周期事件翻译成 project 内事件与通知。
@@ -119,6 +161,7 @@ func (s *UpdateService) subscribe() {
 		s.release = rel
 		s.progress = updater.Progress{Total: rel.Artifact.Size}
 		s.mu.Unlock()
+		s.verified.Store(false) // 新版本待下载，校验结果作废
 
 		s.emitStatus(updateAvailableEvent)
 		notifyUser("success", "发现新版本 v"+rel.Version, "开始自动下载，完成后重启生效")
@@ -142,6 +185,17 @@ func (s *UpdateService) subscribe() {
 	})
 
 	s.app.Event.On(updater.EventUpdateReady, func(_ *application.CustomEvent) {
+		// 安装前最后一道闸：重新计算已下载二进制的 SHA-256，
+		// 与 release 附带 checksums.txt 中该资产的哈希比对；不一致则拒绝重启生效。
+		// （updater 下载时已做过一次流式校验，这里按发布源独立复核。）
+		if err := s.verifyDownloaded(); err != nil {
+			s.verified.Store(false)
+			s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "verify", Message: err.Error()})
+			notifyUser("error", "更新校验失败", err.Error()+"，已阻止重启生效")
+			log.Printf("更新二次校验失败: %v", err)
+			return
+		}
+		s.verified.Store(true)
 		s.emitStatus(updateReadyEvent)
 		notifyUser("success", "更新已就绪", "重启 RcloneDrive 后生效")
 	})
@@ -160,21 +214,39 @@ func (s *UpdateService) subscribe() {
 	})
 }
 
-// checkOnStartup 启动后稍等片刻做一次后台检查（不拖慢启动，也让网络就绪）。
-// 后台检查保持静默：有更新才通知，已是最新不打扰。
-func (s *UpdateService) checkOnStartup() {
-	time.Sleep(10 * time.Second)
-	if s.app == nil || s.app.Updater == nil {
-		return
+// verifyDownloaded 复核已下载文件与 release 公布摘要的一致性。
+func (s *UpdateService) verifyDownloaded() error {
+	s.mu.Lock()
+	release := s.release
+	s.mu.Unlock()
+	if release == nil {
+		return errors.New("缺少新版本信息")
 	}
-	if _, err := s.app.Updater.Check(context.Background()); err != nil {
-		log.Printf("启动时检查更新失败: %v", err)
+	if release.Verification == nil || len(release.Verification.Digest) == 0 {
+		return errors.New("release 未提供校验信息（checksums.txt），无法确认二进制来源")
 	}
+	path := s.app.Updater.DownloadedPath()
+	if path == "" {
+		return errors.New("未找到已下载的更新文件")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("打开已下载的更新文件失败: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("读取已下载的更新文件失败: %w", err)
+	}
+	if !bytes.Equal(h.Sum(nil), release.Verification.Digest) {
+		return errors.New("已下载文件与发布版本校验和不一致")
+	}
+	return nil
 }
 
 // Status 返回当前更新状态（设置窗口打开时初始化用）。
 func (s *UpdateService) Status() UpdateStatus {
-	status := UpdateStatus{Current: appVersion}
+	status := UpdateStatus{Current: appVersion, Verified: s.verified.Load()}
 	if s.app == nil || s.app.Updater == nil {
 		return status
 	}
@@ -214,10 +286,13 @@ func (s *UpdateService) CheckManual() {
 	}
 }
 
-// Restart 重启应用使更新生效（仅在 update-ready 后可用）。
+// Restart 重启应用使更新生效（仅在 update-ready 且二次校验通过后可用）。
 func (s *UpdateService) Restart() error {
 	if s.app == nil || s.app.Updater == nil {
 		return nil
+	}
+	if s.app.Updater.DownloadedPath() != "" && !s.verified.Load() {
+		return errors.New("更新文件校验未通过，已阻止重启生效")
 	}
 	return s.app.Updater.Restart(context.Background())
 }

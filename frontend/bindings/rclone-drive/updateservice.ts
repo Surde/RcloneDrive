@@ -4,6 +4,7 @@
 /**
  * UpdateService 封装 Wails updater：GitHub Releases 为更新源，
  * 发现新版本后自动下载安装，重启由用户确认（见事件处理）。
+ * 自动检查默认关闭，仅在用户在设置中开启后才启动；手动「检查更新」始终可用。
  * @module
  */
 
@@ -36,7 +37,7 @@ export function Progress(): $CancellablePromise<updater$0.Progress> {
 }
 
 /**
- * Restart 重启应用使更新生效（仅在 update-ready 后可用）。
+ * Restart 重启应用使更新生效（仅在 update-ready 且二次校验通过后可用）。
  */
 export function Restart(): $CancellablePromise<void> {
     return $Call.ByID(3205679179);

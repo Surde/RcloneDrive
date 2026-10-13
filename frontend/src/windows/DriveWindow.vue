@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
-import { ChevronDown, CircleHelp, Search } from "@lucide/vue";
+import { ChevronDown, CircleHelp, Search, TriangleAlert } from "@lucide/vue";
 import { Events, Window } from "@wailsio/runtime";
 import type { Field as RcloneField } from "../../bindings/rclone-drive/internal/rclone/models";
 import type { BackendGroup, BackendType } from "../../bindings/rclone-drive/internal/rclone/models";
@@ -257,12 +257,17 @@ function fillFrom(remote: Remote) {
   insecure.value = remote.insecure;
   invalid.value = {};
   seedOptions(false);
-  const opts = { ...options.value };
-  for (const [key, value] of Object.entries(remote.options ?? {})) {
-    if (value !== undefined) opts[key] = value;
-  }
-  options.value = opts;
-  splitWebdavUrl(opts.url ?? "");
+  // 凭据不落 remotes.json：配置项从 rclone.conf 回读（密码字段后端已解密）
+  RemoteService.Options(remote.name)
+    .then((stored) => {
+      const opts = { ...options.value };
+      for (const [key, value] of Object.entries(stored ?? {})) {
+        if (value !== undefined) opts[key] = value;
+      }
+      options.value = opts;
+      splitWebdavUrl(opts.url ?? "");
+    })
+    .catch((e) => notifyError(errMsg(e), "读取驱动器配置失败"));
 }
 
 async function loadFields(typ: string) {
@@ -655,11 +660,23 @@ function onCancel() {
                             <CircleHelp class="size-3.5" />
                           </button>
                         </TooltipTrigger>
-                        <TooltipContent side="top" class="max-w-56">自签名证书的 HTTPS 服务器无法校验证书时勾选</TooltipContent>
+                        <TooltipContent side="top" class="max-w-56">
+                          自签名证书的 HTTPS 服务器无法校验证书时勾选。注意：开启后该驱动器的流量不再受 TLS 保护，存在被窃听、篡改的风险
+                        </TooltipContent>
                       </Tooltip>
                     </FieldLabel>
                   </Field>
                 </FieldSet>
+
+                <div
+                  v-if="insecure"
+                  class="mt-1 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400"
+                >
+                  <TriangleAlert class="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    安全警告：启用后该驱动器的 HTTPS 流量将不再校验证书，同一网络下的攻击者可能窃听或篡改传输内容（包括账号密码）。仅建议对使用自签名证书的自建服务器开启。
+                  </span>
+                </div>
 
                 <FieldSeparator>连接设置</FieldSeparator>
 

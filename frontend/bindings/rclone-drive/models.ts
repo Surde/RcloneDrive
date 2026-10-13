@@ -49,6 +49,8 @@ export interface RcloneStatus {
 
 /**
  * Remote 描述一个远程存储及其本地挂载偏好。
+ * Options 只作为 Create/Update 的请求负载在进程内传递，不落盘：
+ * 凭证明文存 remotes.json 会被本机其他进程收割，配置只保存在 rclone.conf（密码已混淆）。
  */
 export interface Remote {
     "name": string;
@@ -61,7 +63,7 @@ export interface Remote {
      * Insecure 为 true 时该驱动器的挂载跳过 TLS 证书校验（自签名证书用）
      */
     "insecure": boolean;
-    "options": { [_ in string]?: string } | null;
+    "options"?: { [_ in string]?: string } | null;
 }
 
 /**
@@ -97,4 +99,10 @@ export interface UpdateStatus {
     "notes"?: string;
     "url"?: string;
     "downloaded": boolean;
+
+    /**
+     * Verified 为 true 表示已下载的二进制与 release 公布的 SHA-256 二次校验一致，
+     * 此时才允许重启生效；false 时「立即重启」不可用。
+     */
+    "verified": boolean;
 }

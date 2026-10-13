@@ -24,6 +24,8 @@ func init() {
 }
 
 // Remote 描述一个远程存储及其本地挂载偏好。
+// Options 只作为 Create/Update 的请求负载在进程内传递，不落盘：
+// 凭证明文存 remotes.json 会被本机其他进程收割，配置只保存在 rclone.conf（密码已混淆）。
 type Remote struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
@@ -32,7 +34,7 @@ type Remote struct {
 	ReadOnly    bool   `json:"readOnly"`
 	// Insecure 为 true 时该驱动器的挂载跳过 TLS 证书校验（自签名证书用）
 	Insecure bool              `json:"insecure"`
-	Options  map[string]string `json:"options"`
+	Options  map[string]string `json:"options,omitempty"`
 }
 
 // RemoteService 管理远程存储的增删改查与连接测试。
@@ -101,23 +103,42 @@ func (s *RemoteService) load() error {
 	if err := json.Unmarshal(data, &remotes); err != nil {
 		return fmt.Errorf("解析远程存储列表失败: %w", err)
 	}
+	// 迁移旧版本：Options 曾以明文落盘，这里清掉内存副本并立即重写文件。
+	// 配置本体在 rclone.conf（密码已混淆），编辑时经 Options() 从那里回读。
+	stripped := false
+	for i := range remotes {
+		if len(remotes[i].Options) > 0 {
+			remotes[i].Options = nil
+			stripped = true
+		}
+	}
 	s.mu.Lock()
 	s.remotes = remotes
 	s.mu.Unlock()
+	if stripped {
+		return s.save()
+	}
 	return nil
 }
 
 func (s *RemoteService) save() error {
 	s.mu.RLock()
-	data, err := json.MarshalIndent(s.remotes, "", "  ")
+	// 凭据不落盘：marshal 前剥离 Options（见 Remote 结构注释）
+	stored := make([]Remote, len(s.remotes))
+	copy(stored, s.remotes)
 	s.mu.RUnlock()
+	for i := range stored {
+		stored[i].Options = nil
+	}
+	data, err := json.MarshalIndent(stored, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.metaPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.metaPath), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.metaPath, data, 0o644); err != nil {
+	// 0600：文件里不再有凭据，仍按可能含敏感偏好的配置处理
+	if err := os.WriteFile(s.metaPath, data, 0o600); err != nil {
 		return err
 	}
 	// 列表变化后刷新托盘菜单
@@ -144,6 +165,15 @@ func (s *RemoteService) Get(name string) (Remote, bool) {
 		}
 	}
 	return Remote{}, false
+}
+
+// Options 返回某个远程存储的完整配置项（从 rclone.conf 回读，密码字段已解密），
+// 供编辑表单回填。凭据不落 remotes.json（见 Remote 结构注释）。
+func (s *RemoteService) Options(name string) (map[string]string, error) {
+	if _, ok := s.Get(name); !ok {
+		return nil, fmt.Errorf("远程存储不存在: %s", name)
+	}
+	return rclone.ReadRemote(name)
 }
 
 // BackendCatalog 返回按用途分组的连接类型目录（rclone 全部后端），供前端渲染左侧树。

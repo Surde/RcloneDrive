@@ -21,7 +21,8 @@ export function useUpdate() {
     return ["checking", "downloading", "verifying", "installing"].includes(state);
   });
 
-  const ready = computed(() => status.value?.downloaded === true);
+  // 仅当已下载且 SHA-256 二次校验通过时才允许「立即重启」
+  const ready = computed(() => status.value?.downloaded === true && status.value?.verified === true);
   const downloading = computed(() => {
     const state = status.value?.state ?? "";
     return ["downloading", "verifying", "installing"].includes(state);

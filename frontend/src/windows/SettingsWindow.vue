@@ -50,6 +50,8 @@ const saving = ref(false);
 const supported = ref(true);
 const autoStart = ref(false);
 const target = ref("");
+const autoUpdate = ref(false);
+const autoUpdateSaving = ref(false);
 
 function errMsg(e: unknown) {
   return e instanceof Error ? e.message : String(e);
@@ -69,7 +71,36 @@ async function loadAutoStart() {
   }
 }
 
-onMounted(loadAutoStart);
+async function loadAutoUpdate() {
+  try {
+    autoUpdate.value = await SettingsService.AutoUpdate();
+  } catch (e) {
+    notifyError(errMsg(e), "读取自动更新设置失败");
+  }
+}
+
+onMounted(() => {
+  void loadAutoStart();
+  void loadAutoUpdate();
+});
+
+// 开启自动更新后立即检查一次，不用等下一个周期
+async function onToggleAutoUpdate(next: boolean) {
+  autoUpdateSaving.value = true;
+  try {
+    await SettingsService.SetAutoUpdate(next);
+    notifySuccess(
+      next ? "已开启自动检查更新" : "已关闭自动检查更新",
+      next ? "应用启动后将自动检查并下载新版本（每 6 小时复查）" : "应用不再自动检查更新，可在下方手动检查",
+    );
+    if (next) await check();
+  } catch (e) {
+    notifyError(errMsg(e), "设置自动更新失败");
+    await loadAutoUpdate();
+  } finally {
+    autoUpdateSaving.value = false;
+  }
+}
 
 async function onToggleAutoStart(next: boolean) {
   saving.value = true;
@@ -116,7 +147,7 @@ const statusText = computed(() => {
     default:
       break;
   }
-  if (ready.value) return "更新已就绪，重启后生效";
+  if (ready.value) return "更新已就绪（校验通过），重启后生效";
   if (state === "up-to-date") return "已是最新版本";
   return "点击「检查更新」查看是否有新版本";
 });
@@ -232,6 +263,28 @@ async function onRestart() {
 
             <FieldSet v-if="section === 'update'">
               <FieldLegend variant="label">更新</FieldLegend>
+              <Field orientation="horizontal">
+                <Switch
+                  id="settings-autoupdate"
+                  :model-value="autoUpdate"
+                  :disabled="autoUpdateSaving"
+                  @update:model-value="onToggleAutoUpdate"
+                />
+                <FieldLabel for="settings-autoupdate" class="flex items-center gap-1.5 font-normal">
+                  自动检查更新
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <button type="button" class="cursor-help text-muted-foreground transition-colors hover:text-foreground" @click.stop>
+                        <CircleHelp class="size-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" class="max-w-56">
+                      默认关闭。开启后应用启动时及每 6 小时自动检查并下载新版本；下载的文件会经 SHA-256 校验通过后才允许重启生效
+                    </TooltipContent>
+                  </Tooltip>
+                </FieldLabel>
+                <Spinner v-if="autoUpdateSaving" />
+              </Field>
               <Field>
                 <FieldLabel>当前版本</FieldLabel>
                 <FieldDescription v-if="status">v{{ status.current }}</FieldDescription>

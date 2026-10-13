@@ -68,6 +68,14 @@ export function OnChange(fn: any): $CancellablePromise<void> {
 }
 
 /**
+ * Options 返回某个远程存储的完整配置项（从 rclone.conf 回读，密码字段已解密），
+ * 供编辑表单回填。凭据不落 remotes.json（见 Remote 结构注释）。
+ */
+export function Options(name: string): $CancellablePromise<{ [_ in string]?: string } | null> {
+    return $Call.ByID(3370984459, name);
+}
+
+/**
  * Test 在进程内建立连接并列举根目录，验证远程存储可用。
  */
 export function Test(name: string): $CancellablePromise<void> {

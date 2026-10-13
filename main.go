@@ -28,7 +28,8 @@ func main() {
 	remoteService := NewRemoteService(mountManager)
 	mountService := NewMountService(remoteService, mountManager)
 	windowService := NewWindowService()
-	updateService := NewUpdateService()
+	settingsService := &SettingsService{}
+	updateService := NewUpdateService(settingsService)
 
 	// --tray：开机自启时静默启动到托盘，不弹出窗口
 	startHidden := slices.Contains(os.Args[1:], trayFlag)
@@ -40,7 +41,7 @@ func main() {
 			application.NewService(remoteService),
 			application.NewService(mountService),
 			application.NewService(&SystemService{}),
-			application.NewService(&SettingsService{}),
+			application.NewService(settingsService),
 			application.NewService(windowService),
 			application.NewService(updateService),
 		},

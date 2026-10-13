@@ -3,6 +3,7 @@
 
 /**
  * SettingsService 提供应用级设置的读写。
+ * 设置持久化在 <ConfigDir>/settings.json（0600）。
  * @module
  */
 
@@ -22,8 +23,22 @@ export function AutoStart(): $CancellablePromise<$models.AutoStartStatus> {
 }
 
 /**
+ * AutoUpdate 返回用户是否开启了自动检查更新（默认关闭）。
+ */
+export function AutoUpdate(): $CancellablePromise<boolean> {
+    return $Call.ByID(3334444266);
+}
+
+/**
  * SetAutoStart 打开或关闭开机自启，自启项指向当前可执行文件。
  */
 export function SetAutoStart(enabled: boolean): $CancellablePromise<void> {
     return $Call.ByID(2320920993, enabled);
+}
+
+/**
+ * SetAutoUpdate 打开或关闭自动检查更新，立即持久化。
+ */
+export function SetAutoUpdate(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1294526738, enabled);
 }

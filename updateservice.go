@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,10 @@ const updateCheckInterval = 6 * time.Hour
 
 // updateRepository 是发布 Release 的 GitHub 仓库。
 const updateRepository = "younland/RcloneDrive"
+
+// updateHTTPTimeout 是更新相关 HTTP 请求的总超时。便携版二进制近 80MB，
+// 默认 30s 总超时会掐断慢速网络下的下载；完整性靠 release 附带的 checksums 校验兜底。
+const updateHTTPTimeout = 30 * time.Minute
 
 // UpdateStatus 描述当前更新状态，随 update:* 事件推给前端，也是 Status() 的返回。
 type UpdateStatus struct {
@@ -78,6 +83,10 @@ func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceO
 	gh, err := github.New(github.Config{
 		Repository:   updateRepository,
 		AssetMatcher: portableAssetMatcher,
+		// release 附带 checksums.txt：下载被中断（连接被干净地提前 EOF）时
+		// 提供商会当作成功返回，校验和是兜住部分文件的最后防线
+		ChecksumAsset: "checksums.txt",
+		HTTPClient:    &http.Client{Timeout: updateHTTPTimeout},
 	})
 	if err != nil {
 		log.Printf("更新器初始化失败: %v", err)
@@ -112,7 +121,7 @@ func (s *UpdateService) subscribe() {
 		s.mu.Unlock()
 
 		s.emitStatus(updateAvailableEvent)
-		notifyUser("success", "发现新版本 v"+rel.Version, "已自动下载，完成后重启生效")
+		notifyUser("success", "发现新版本 v"+rel.Version, "开始自动下载，完成后重启生效")
 
 		// 自动下载安装；state 已经是 downloading 说明是 CheckAndInstall 带起来的，别重复下载
 		if s.app.Updater.State() == updater.StateAvailable && s.autoStarted.CompareAndSwap(false, true) {
@@ -145,6 +154,9 @@ func (s *UpdateService) subscribe() {
 		info, _ := e.Data.(updater.ErrorInfo)
 		s.emit(updateErrorEvent, UpdateErrorEvent{Stage: string(info.Stage), Message: info.Message})
 		log.Printf("更新失败(stage=%s): %s", info.Stage, info.Message)
+		// 下载失败后复位自动下载标记，下次检查（启动时或周期检查）会重试；
+		// 成功（ready）时保持 true，避免已就绪后重复下载
+		s.autoStarted.Store(false)
 	})
 }
 

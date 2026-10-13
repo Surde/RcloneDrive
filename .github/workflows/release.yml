@@ -352,6 +352,10 @@ jobs:
         run: |
           set -euo pipefail
           ls -l dist
+          # 自动更新的完整性校验和：应用端按文件名从 checksums.txt 查摘要，
+          # 防止下载被中途截断（提前 EOF）时把部分文件当成完整更新装上
+          (cd dist && sha256sum * > checksums.txt)
+          cat dist/checksums.txt
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" dist/* --clobber
           else

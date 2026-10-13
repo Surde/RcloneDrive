@@ -86,13 +86,53 @@ function providerMatches(filter: string, provider: string): boolean {
 const visibleFields = computed(() => {
   const provider = (options.value.provider ?? "").toLowerCase();
   return fields.value.filter((field) => {
-    // webdav 的 url / 服务商 / 用户名 / 密码由组合行单独渲染（见下方模板），不走通用渲染
-    if (selectedType.value === "webdav" && ["url", "vendor", "user", "pass"].includes(field.key)) return false;
+    // webdav / sftp / ftp 的部分字段由组合行单独渲染（见下方模板），不走通用渲染
+    if (compositeKeys.value.includes(field.key)) return false;
     return !field.provider || providerMatches(field.provider, provider);
   });
 });
+
+// 组合行渲染的字段（按连接类型）：webdav 拆地址/服务商/凭据，sftp/ftp 合并主机+端口、用户名+密码
+const compositeKeys = computed<string[]>(() => {
+  switch (selectedType.value) {
+    case "webdav":
+      return ["url", "vendor", "user", "pass"];
+    case "sftp":
+    case "ftp":
+      return ["host", "port", "user", "pass"];
+    default:
+      return [];
+  }
+});
 const basicFields = computed(() => visibleFields.value.filter((f) => !f.advanced));
 const advancedFields = computed(() => visibleFields.value.filter((f) => f.advanced));
+
+// 连续的 bool 字段并排成一行（复选框 + 标签），非 bool 字段保持独占一行
+type FieldSegment = { kind: "bools"; fields: RcloneField[] } | { kind: "field"; field: RcloneField };
+
+function segmentFields(list: RcloneField[]): FieldSegment[] {
+  const segments: FieldSegment[] = [];
+  let bools: RcloneField[] = [];
+  const flush = () => {
+    if (bools.length) {
+      segments.push({ kind: "bools", fields: bools });
+      bools = [];
+    }
+  };
+  for (const field of list) {
+    if (field.type === "bool") {
+      bools.push(field);
+    } else {
+      flush();
+      segments.push({ kind: "field", field });
+    }
+  }
+  flush();
+  return segments;
+}
+
+const basicSegments = computed(() => segmentFields(basicFields.value));
+const advancedSegments = computed(() => segmentFields(advancedFields.value));
 
 // WebDAV：url 拆成 协议 / 地址 / 端口 三列，组合值仍写入 options.url，
 // 校验、保存、测试连接沿用原有 url 字段的逻辑
@@ -109,6 +149,10 @@ const webdavVendorOptions = computed(() => webdavVendorField.value?.examples ?? 
 
 const webdavUserField = computed(() => fields.value.find((f) => f.key === "user"));
 const webdavPassField = computed(() => fields.value.find((f) => f.key === "pass"));
+
+// sftp / ftp 组合行用到的字段
+const hostField = computed(() => fields.value.find((f) => f.key === "host"));
+const portField = computed(() => fields.value.find((f) => f.key === "port"));
 
 function setOption(key: string, value: unknown) {
   options.value = { ...options.value, [key]: value == null ? "" : String(value) };
@@ -647,7 +691,29 @@ function onCancel() {
                   <FieldDescription v-if="isInvalid('url')">请填写完整的地址信息。</FieldDescription>
                 </Field>
 
-                <div v-if="selectedType === 'webdav' && webdavUserField && webdavPassField" class="flex items-start gap-2">
+                <div v-if="(selectedType === 'sftp' || selectedType === 'ftp') && hostField && portField" class="flex items-start gap-2">
+                  <div class="min-w-0 flex-1">
+                    <DriveField
+                      v-model="options.host"
+                      :field="hostField"
+                      :scope="`drive-${selectedType}-basic`"
+                      :invalid="Boolean(isInvalid('host'))"
+                    />
+                  </div>
+                  <div class="w-28 shrink-0">
+                    <DriveField
+                      v-model="options.port"
+                      :field="portField"
+                      :scope="`drive-${selectedType}-basic`"
+                      :invalid="Boolean(isInvalid('port'))"
+                    />
+                  </div>
+                </div>
+
+                <div
+                  v-if="['webdav', 'sftp', 'ftp'].includes(selectedType) && webdavUserField && webdavPassField"
+                  class="flex items-start gap-2"
+                >
                   <div class="min-w-0 flex-1">
                     <DriveField
                       v-model="options.user"
@@ -666,28 +732,50 @@ function onCancel() {
                   </div>
                 </div>
 
-                <DriveField
-                  v-for="field in basicFields"
-                  :key="field.key"
-                  v-model="options[field.key]"
-                  :field="field"
-                  :scope="`drive-${selectedType}-basic`"
-                  :invalid="Boolean(isInvalid(field.key))"
-                />
+                <template v-for="(seg, i) in basicSegments" :key="seg.kind === 'field' ? seg.field.key : `bools-${i}`">
+                  <div v-if="seg.kind === 'bools'" class="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <DriveField
+                      v-for="f in seg.fields"
+                      :key="f.key"
+                      v-model="options[f.key]"
+                      :field="f"
+                      :scope="`drive-${selectedType}-basic`"
+                      :invalid="Boolean(isInvalid(f.key))"
+                    />
+                  </div>
+                  <DriveField
+                    v-else
+                    v-model="options[seg.field.key]"
+                    :field="seg.field"
+                    :scope="`drive-${selectedType}-basic`"
+                    :invalid="Boolean(isInvalid(seg.field.key))"
+                  />
+                </template>
               </FieldGroup>
             </TabsContent>
 
             <TabsContent value="advanced">
               <FieldGroup>
                 <p v-if="advancedFields.length === 0" class="text-muted-foreground text-xs">该连接类型没有高级选项。</p>
-                <DriveField
-                  v-for="field in advancedFields"
-                  :key="field.key"
-                  v-model="options[field.key]"
-                  :field="field"
-                  :scope="`drive-${selectedType}-advanced`"
-                  :invalid="Boolean(isInvalid(field.key))"
-                />
+                <template v-for="(seg, i) in advancedSegments" :key="seg.kind === 'field' ? seg.field.key : `bools-${i}`">
+                  <div v-if="seg.kind === 'bools'" class="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <DriveField
+                      v-for="f in seg.fields"
+                      :key="f.key"
+                      v-model="options[f.key]"
+                      :field="f"
+                      :scope="`drive-${selectedType}-advanced`"
+                      :invalid="Boolean(isInvalid(f.key))"
+                    />
+                  </div>
+                  <DriveField
+                    v-else
+                    v-model="options[seg.field.key]"
+                    :field="seg.field"
+                    :scope="`drive-${selectedType}-advanced`"
+                    :invalid="Boolean(isInvalid(seg.field.key))"
+                  />
+                </template>
               </FieldGroup>
             </TabsContent>
 

@@ -69,7 +69,7 @@ func Fields(typ string) ([]Field, error) {
 		field := Field{
 			Key:      option.Name,
 			Label:    optionLabel(option.Name),
-			Help:     strings.TrimSpace(option.Help),
+			Help:     optionHelp(option.Name, strings.TrimSpace(option.Help)),
 			Type:     option.Type(),
 			Default:  fallback,
 			Required: option.Required,
@@ -83,6 +83,12 @@ func Fields(typ string) ([]Field, error) {
 			label := strings.TrimSpace(example.Help)
 			if label == "" {
 				label = example.Value
+			}
+			// webdav 服务商选项的英文说明换成简短中文（value 不变，写入配置的仍是标识符）
+			if typ == "webdav" && option.Name == "vendor" {
+				if zh, ok := webdavVendorLabels[example.Value]; ok {
+					label = zh
+				}
 			}
 			field.Examples = append(field.Examples, FieldExample{Value: example.Value, Label: label})
 		}
@@ -290,6 +296,41 @@ var backendLabels = map[string]string{
 	"webdav":               "WebDAV",
 	"yandex":               "Yandex Disk",
 	"zoho":                 "Zoho",
+}
+
+// webdavVendorLabels 是 webdav 服务商选项的简短中文名（value 是写入配置的标识符，不变）。
+var webdavVendorLabels = map[string]string{
+	"fastmail":        "Fastmail 文件",
+	"nextcloud":       "Nextcloud 私有云",
+	"owncloud":        "ownCloud 10（PHP 版）",
+	"infinitescale":   "ownCloud Infinite Scale",
+	"sharepoint":      "SharePoint 在线版（微软账号）",
+	"sharepoint-ntlm": "SharePoint（NTLM 认证，自建/本地）",
+	"rclone":          "rclone WebDAV 服务器",
+	"other":           "其他服务",
+}
+
+// optionHelp 返回字段说明的中文翻译，未收录时保留 rclone 原文。
+// 与 optionLabel 一样按字段名映射：这些字段在各后端里的含义基本一致。
+func optionHelp(name, fallback string) string {
+	if help, ok := optionHelps[name]; ok {
+		return help
+	}
+	return fallback
+}
+
+// optionHelps 是常见配置字段说明的中文提示（tooltip 内容）。
+var optionHelps = map[string]string{
+	"url":           "要连接的服务器地址，例如 https://example.com。",
+	"vendor":        "所用的 WebDAV 服务/软件类型，影响 rclone 的兼容性处理；不确定时选「其他服务」。",
+	"user":          "登录该服务的用户名。",
+	"pass":          "登录该服务的密码。",
+	"bearer_token":  "用 Bearer 令牌代替用户名/密码登录（如 Macaroon）。",
+	"host":          "服务器主机名或 IP 地址。",
+	"port":          "服务器端口。",
+	"key_file":      "SSH 私钥文件路径，留空表示使用密码登录。",
+	"key_file_pass": "私钥文件的口令（私钥未设口令则留空）。",
+	"token":         "OAuth 授权令牌，可通过 rclone authorize 获取。",
 }
 
 // optionLabels 是常见配置字段的中文标签；未收录的用字段名转标题兜底。

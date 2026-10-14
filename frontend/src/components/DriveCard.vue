@@ -6,7 +6,7 @@ import * as MountService from "../../bindings/rclone-drive/mountservice";
 import * as RemoteService from "../../bindings/rclone-drive/remoteservice";
 import * as WindowService from "../../bindings/rclone-drive/windowservice";
 import { formatSize, formatSpeed } from "@/lib/format";
-import { notifyError, notifySuccess } from "@/lib/notify";
+import { notifyError } from "@/lib/notify";
 import { useTypeLabels } from "@/composables/useTypeLabels";
 import ProtocolIcon from "./ProtocolIcon.vue";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -58,11 +58,10 @@ async function toggle() {
   try {
     if (mounted.value) {
       await MountService.Unmount(props.remote.name);
-      notifySuccess("已断开", `「${props.remote.name}」已断开连接`);
     } else {
       await MountService.Mount(props.remote.name);
-      notifySuccess("已连接", `「${props.remote.name}」已挂载`);
     }
+    // 连接/断开成功不弹提示：卡片状态与托盘菜单已给出反馈
     emit("changed");
   } catch (e) {
     notifyError(message(e), mounted.value ? "断开失败" : "挂载失败");
@@ -94,7 +93,7 @@ async function disconnectAndEdit() {
   disconnecting.value = true;
   try {
     await MountService.Unmount(props.remote.name);
-    notifySuccess("已断开", `「${props.remote.name}」已断开连接`);
+    // 断开成功不弹提示：随后直接进入编辑窗口
     emit("changed");
     editConfirmOpen.value = false;
     void WindowService.OpenEditDrive(props.remote.name);

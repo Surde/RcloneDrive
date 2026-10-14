@@ -24,6 +24,10 @@ import { Toaster } from "@/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTheme } from "../composables/useTheme";
+import { useBackendToast } from "../composables/useBackendToast";
+
+// 后端提示（如自动连接失败）若定向到本窗口，toast 显示在这里
+useBackendToast("drive");
 
 // 编辑模式由窗口 URL 决定：#/drive?edit=<名称>
 const { isDark } = useTheme();

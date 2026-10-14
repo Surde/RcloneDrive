@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref } from "vue";
 import { HardDrive, Plus, Settings, TriangleAlert, X } from "@lucide/vue";
-import { Events, Window } from "@wailsio/runtime";
+import { Window } from "@wailsio/runtime";
 import type { RcloneStatus } from "../bindings/rclone-drive/models";
 import * as SystemService from "../bindings/rclone-drive/systemservice";
 import * as WindowService from "../bindings/rclone-drive/windowservice";
@@ -12,7 +12,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Skeleton } from "@/components/ui/skeleton";
 import { Toaster } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { notifyFromBackend } from "./lib/notify";
+import { useBackendToast } from "./composables/useBackendToast";
 import { useDrives } from "./composables/useDrives";
 import { useTheme } from "./composables/useTheme";
 import { useTypeLabels } from "./composables/useTypeLabels";
@@ -23,15 +23,7 @@ void loadTypeLabels();
 
 // 后端在主窗口可见时把提示作为事件发过来（隐藏到托盘时才改发系统通知）
 const { isDark } = useTheme();
-let offToast: (() => void) | undefined;
-onMounted(() => {
-  offToast = Events.On("app:toast", (event) => {
-    const data = event.data as { level?: string; title?: string; body?: string } | undefined;
-    if (!data?.title) return;
-    notifyFromBackend(data.level ?? "success", data.title, data.body ?? "");
-  });
-});
-onUnmounted(() => offToast?.());
+useBackendToast("main");
 
 const rclone = ref<RcloneStatus | null>(null);
 

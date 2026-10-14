@@ -62,6 +62,7 @@ func main() {
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "RcloneDrive",
+		Name:   "main",
 		Width:  580,
 		Height: 540,
 		// 固定尺寸、无系统窗口边框，标题栏由前端自绘（仅保留关闭按钮）

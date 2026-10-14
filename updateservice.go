@@ -39,9 +39,10 @@ const updateRepository = "younland/RcloneDrive"
 // 默认 30s 总超时会掐断慢速网络下的下载；完整性靠 release 附带的 checksums 校验兜底。
 const updateHTTPTimeout = 30 * time.Minute
 
-// updateTransport 构建更新器的 HTTP Transport：优先走 Windows 系统代理。
+// updateTransport 构建更新器的 HTTP Transport：优先走系统代理。
 // Go 的 HTTP 客户端默认不读系统代理（浏览器走代理），直连 github.com 被
 // 网络阻断时检查更新会超时；无系统代理时维持默认行为（读 HTTPS_PROXY 环境变量）。
+// 各平台系统代理来源见 proxy_*.go：Windows 注册表、macOS scutil、Linux gsettings/环境变量。
 func updateTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if u := systemProxy(); u != nil {
@@ -84,6 +85,9 @@ type UpdateService struct {
 	autoStarted atomic.Bool
 	// verified 记录最近一次下载完成后的二次校验结果，Restart 据此放行。
 	verified atomic.Bool
+	// toastTarget 记录最近一次检查的发起窗口，后续事件提示按它定向
+	// （设置窗口发起的检查，提示应出现在设置窗口而不是主窗口）。
+	toastTarget atomic.Value
 }
 
 // NewUpdateService 创建更新服务。
@@ -156,13 +160,23 @@ func (s *UpdateService) checkBackground() {
 	if s.app == nil || s.app.Updater == nil {
 		return
 	}
+	s.toastTarget.Store("main")
 	if _, err := s.app.Updater.Check(context.Background()); err != nil {
 		log.Printf("检查更新失败: %v", err)
 	}
 }
 
+// currentToastTarget 返回最近一次检查发起方的窗口名（缺省主窗口）。
+func (s *UpdateService) currentToastTarget() string {
+	if v, ok := s.toastTarget.Load().(string); ok && v != "" {
+		return v
+	}
+	return "main"
+}
+
 // subscribe 把 updater 的生命周期事件翻译成 project 内事件与通知。
 func (s *UpdateService) subscribe() {
+	target := s.currentToastTarget
 	s.app.Event.On(updater.EventUpdateAvailable, func(e *application.CustomEvent) {
 		rel, _ := e.Data.(*updater.Release)
 		if rel == nil {
@@ -175,7 +189,7 @@ func (s *UpdateService) subscribe() {
 		s.verified.Store(false) // 新版本待下载，校验结果作废
 
 		s.emitStatus(updateAvailableEvent)
-		notifyUser("success", "发现新版本 v"+rel.Version, "开始自动下载，完成后重启生效")
+		notifyUserTo(target(), "success", "发现新版本 v"+rel.Version, "开始自动下载，完成后重启生效")
 
 		// 自动下载安装；state 已经是 downloading 说明是 CheckAndInstall 带起来的，别重复下载
 		if s.app.Updater.State() == updater.StateAvailable && s.autoStarted.CompareAndSwap(false, true) {
@@ -202,13 +216,13 @@ func (s *UpdateService) subscribe() {
 		if err := s.verifyDownloaded(); err != nil {
 			s.verified.Store(false)
 			s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "verify", Message: err.Error()})
-			notifyUser("error", "更新校验失败", err.Error()+"，已阻止重启生效")
+			notifyUserTo(target(), "error", "更新校验失败", err.Error()+"，已阻止重启生效")
 			log.Printf("更新二次校验失败: %v", err)
 			return
 		}
 		s.verified.Store(true)
 		s.emitStatus(updateReadyEvent)
-		notifyUser("success", "更新已就绪", "重启 RcloneDrive 后生效")
+		notifyUserTo(target(), "success", "更新已就绪", "重启 RcloneDrive 后生效")
 	})
 
 	s.app.Event.On(updater.EventNoUpdate, func(_ *application.CustomEvent) {
@@ -276,10 +290,20 @@ func (s *UpdateService) Status() UpdateStatus {
 	return status
 }
 
-// CheckManual 触发一次更新检查（托盘菜单 / 设置按钮）。
+// CheckManual 触发一次更新检查（设置窗口的「检查更新」按钮）。
 // 用户主动触发时给出明确反馈：无更新、出错都会通知；发现新版本则由
 // 事件处理器通知并自动下载。Check 是同步的，返回时状态已确定。
+// 提示定向到设置窗口（见 subscribe 的 toastTarget）。
 func (s *UpdateService) CheckManual() {
+	s.checkManual(settingsWindowName)
+}
+
+// checkFromTray 托盘菜单发起的检查，提示定向到主窗口。
+func (s *UpdateService) checkFromTray() {
+	s.checkManual("main")
+}
+
+func (s *UpdateService) checkManual(target string) {
 	if !autoUpdateEnabled {
 		log.Printf("开发构建：跳过手动检查更新")
 		return
@@ -287,13 +311,14 @@ func (s *UpdateService) CheckManual() {
 	if s.app == nil || s.app.Updater == nil {
 		return
 	}
+	s.toastTarget.Store(target)
 	_, err := s.app.Updater.Check(context.Background())
 	if err != nil {
-		notifyUser("error", "检查更新失败", err.Error())
+		notifyUserTo(target, "error", "检查更新失败", err.Error())
 		return
 	}
 	if s.app.Updater.State() == updater.StateUpToDate {
-		notifyUser("success", "检查更新", "已是最新版本 v"+appVersion)
+		notifyUserTo(target, "success", "检查更新", "已是最新版本 v"+appVersion)
 	}
 }
 

@@ -139,15 +139,16 @@ func (t *trayManager) rebuild() {
 	t.tray.SetMenu(t.menu)
 }
 
-// mount 在后台挂载（可能耗时数秒，避免阻塞托盘菜单）；结果用系统通知提示。
+// mount 在后台挂载（可能耗时数秒，避免阻塞托盘菜单）。
+// 连接/断开不在窗口弹提示（卡片状态与托盘菜单已反馈），只发系统通知。
 func (t *trayManager) mount(name string) {
 	t.setPending(name, "连接中…")
 	err := t.mounts.Mount(name)
 	t.clearPending(name)
 	if err != nil {
-		notifyUser("error", "挂载失败", fmt.Sprintf("「%s」：%v", name, err))
+		notifyNativeOnly("挂载失败", fmt.Sprintf("「%s」：%v", name, err))
 	} else {
-		notifyUser("success", "已连接", fmt.Sprintf("「%s」已挂载", name))
+		notifyNativeOnly("已连接", fmt.Sprintf("「%s」已挂载", name))
 	}
 	t.refresh()
 }
@@ -157,9 +158,9 @@ func (t *trayManager) unmount(name string) {
 	err := t.mounts.Unmount(name)
 	t.clearPending(name)
 	if err != nil {
-		notifyUser("error", "断开失败", fmt.Sprintf("「%s」：%v", name, err))
+		notifyNativeOnly("断开失败", fmt.Sprintf("「%s」：%v", name, err))
 	} else {
-		notifyUser("success", "已断开", fmt.Sprintf("「%s」已断开连接", name))
+		notifyNativeOnly("已断开", fmt.Sprintf("「%s」已断开连接", name))
 	}
 	t.refresh()
 }
@@ -204,7 +205,7 @@ func (t *trayManager) pendingAction(name string) string {
 }
 
 func (t *trayManager) handleCheckUpdate() {
-	t.updates.CheckManual()
+	t.updates.checkFromTray()
 }
 
 func (t *trayManager) showWindow() {

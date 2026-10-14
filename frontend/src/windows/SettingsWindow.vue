@@ -7,6 +7,7 @@ import { formatSize, formatSpeed } from "@/lib/format";
 import WindowBar from "../components/WindowBar.vue";
 import { useTheme, type ThemeMode } from "../composables/useTheme";
 import { useUpdate } from "../composables/useUpdate";
+import { useBackendToast } from "../composables/useBackendToast";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/sonner";
@@ -126,6 +127,9 @@ const autoStartHint = computed(() => {
 });
 
 const { status, progress, error, busy, ready, downloading, check, restart } = useUpdate();
+
+// 设置窗口发起的检查更新，后端提示（检查失败/已是最新/更新就绪）显示在本窗口
+useBackendToast("settings");
 
 const confirmRestart = ref(false);
 

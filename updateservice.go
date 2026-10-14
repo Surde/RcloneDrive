@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -50,6 +51,60 @@ func updateTransport() *http.Transport {
 		transport.Proxy = http.ProxyURL(u)
 	}
 	return transport
+}
+
+// ensureReleaseDigest 为发现的新版本取回并挂上 SHA-256 摘要。
+// Release 的校验文件按发行包名区分（<包名>.sha256），名字随版本变化，
+// 只能在 Check 之后按本平台的发行包名取回；注入 rel.Verification 后
+// updater 下载时会强制校验，下载被截断（提前 EOF）或文件被替换都会被拦住。
+func (s *UpdateService) ensureReleaseDigest(rel *updater.Release) error {
+	if rel.Verification != nil && len(rel.Verification.Digest) > 0 {
+		return nil
+	}
+	assetURL, _ := rel.Metadata["github.asset.url"].(string)
+	if assetURL == "" {
+		return errors.New("缺少资产下载地址，无法获取校验信息")
+	}
+	digest, err := fetchSidecarDigest(assetURL+".sha256", rel.Artifact.Filename)
+	if err != nil {
+		return err
+	}
+	rel.Verification = &updater.Verification{Digest: digest, DigestAlgo: "sha256"}
+	return nil
+}
+
+// fetchSidecarDigest 下载 <发行包名>.sha256 并解析出摘要。
+// 文件内容为 sha256sum 标准格式「<哈希>  <文件名>」，也兼容只有哈希的单行形式；
+// 带文件名时核对必须与目标发行包一致，防止张冠李戴。
+func fetchSidecarDigest(urlStr, wantName string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := (&http.Client{Timeout: updateHTTPTimeout, Transport: updateTransport()}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("下载校验文件失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("下载校验文件失败: HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(string(body))
+	if len(fields) == 0 {
+		return nil, errors.New("校验文件内容为空")
+	}
+	if len(fields) >= 2 && fields[1] != wantName {
+		return nil, fmt.Errorf("校验文件对应的发行包不符：%s ≠ %s", fields[1], wantName)
+	}
+	digest, err := hex.DecodeString(fields[0])
+	if err != nil || len(digest) != sha256.Size {
+		return nil, errors.New("校验文件中的摘要不合法")
+	}
+	return digest, nil
 }
 
 // UpdateStatus 描述当前更新状态，随 update:* 事件推给前端，也是 Status() 的返回。
@@ -113,14 +168,13 @@ func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceO
 	}
 
 	gh, err := github.New(github.Config{
-		Repository: updateRepository,
-		// 安装版（NSIS）选 setup.exe 走安装流程，便携版选裸二进制走替换流程；
-		// updater 的下载校验（checksums.txt）对两种资产都生效。
+		Repository:   updateRepository,
 		AssetMatcher: updateAssetMatcher,
-		// release 附带 checksums.txt：下载被中断（连接被干净地提前 EOF）时
-		// 提供商会当作成功返回，校验和是兜住部分文件的最后防线
-		ChecksumAsset: "checksums.txt",
-		HTTPClient:    &http.Client{Timeout: updateHTTPTimeout, Transport: updateTransport()},
+		// 不用提供商的 ChecksumAsset：按发行包名区分的校验文件（<包名>.sha256）
+		// 名字随版本变化，初始化时还不知道；改为 Check 之后自行取回摘要并
+		// 注入 rel.Verification（见 ensureReleaseDigest），updater 下载时照样
+		// 强制校验（fail closed）。
+		HTTPClient: &http.Client{Timeout: updateHTTPTimeout, Transport: updateTransport()},
 	})
 	if err != nil {
 		log.Printf("更新器初始化失败: %v", err)
@@ -208,6 +262,13 @@ func (s *UpdateService) subscribe() {
 		if rel == nil {
 			return
 		}
+		// 先取回本发行包的校验摘要：取不到就不允许下载，避免装上无法验证来源的更新
+		if err := s.ensureReleaseDigest(rel); err != nil {
+			s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "verify", Message: err.Error()})
+			notifyUserTo(target(), "error", "获取更新校验信息失败", err.Error())
+			log.Printf("获取更新校验信息失败: %v", err)
+			return
+		}
 		s.mu.Lock()
 		s.release = rel
 		s.progress = updater.Progress{Total: rel.Artifact.Size}
@@ -243,7 +304,7 @@ func (s *UpdateService) subscribe() {
 
 	s.app.Event.On(updater.EventUpdateReady, func(_ *application.CustomEvent) {
 		// 安装前最后一道闸：重新计算已下载二进制的 SHA-256，
-		// 与 release 附带 checksums.txt 中该资产的哈希比对；不一致则拒绝重启生效。
+		// 与 release 按发行包名发布的校验文件中该资产的哈希比对；不一致则拒绝重启生效。
 		// （updater 下载时已做过一次流式校验，这里按发布源独立复核。）
 		if err := s.verifyDownloaded(); err != nil {
 			s.verified.Store(false)
@@ -280,7 +341,7 @@ func (s *UpdateService) verifyDownloaded() error {
 		return errors.New("缺少新版本信息")
 	}
 	if release.Verification == nil || len(release.Verification.Digest) == 0 {
-		return errors.New("release 未提供校验信息（checksums.txt），无法确认二进制来源")
+		return errors.New("release 未提供校验信息（" + release.Artifact.Filename + ".sha256），无法确认二进制来源")
 	}
 	path := s.app.Updater.DownloadedPath()
 	if path == "" {
@@ -340,7 +401,7 @@ func (s *UpdateService) downloadInstaller(rel *updater.Release) {
 		return
 	}
 	if rel.Verification == nil || len(rel.Verification.Digest) == 0 {
-		err = errors.New("release 未提供校验信息（checksums.txt），无法确认安装包来源")
+		err = errors.New("release 未提供校验信息（" + rel.Artifact.Filename + ".sha256），无法确认安装包来源")
 		s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "verify", Message: err.Error()})
 		s.autoStarted.Store(false)
 		return

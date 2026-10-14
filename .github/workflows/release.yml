@@ -372,10 +372,11 @@ jobs:
         run: |
           set -euo pipefail
           ls -l dist
-          # 自动更新的完整性校验和：应用端按文件名从 checksums.txt 查摘要，
+          # 自动更新的完整性校验和：按发行包名各一份（<包名>.sha256），
+          # 客户端按本平台的发行包名取对应文件，核对所下载字节的 SHA-256，
           # 防止下载被中途截断（提前 EOF）时把部分文件当成完整更新装上
-          (cd dist && sha256sum * > checksums.txt)
-          cat dist/checksums.txt
+          (cd dist && for f in RcloneDrive-*; do sha256sum "$f" > "$f.sha256"; done)
+          ls -l dist
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" dist/* --clobber
           else

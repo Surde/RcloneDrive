@@ -292,7 +292,8 @@ async function onRestart() {
               </Field>
               <Field>
                 <FieldLabel>状态</FieldLabel>
-                <FieldDescription>{{ statusText }}</FieldDescription>
+                <!-- 错误信息含长 URL / 无空格英文，需要强制断行避免横向溢出 -->
+                <FieldDescription class="break-all">{{ statusText }}</FieldDescription>
                 <template v-if="downloading && progress">
                   <Progress :model-value="percent" class="mt-2" />
                   <FieldDescription class="mt-1">{{ percent }}% · {{ progressText }}</FieldDescription>

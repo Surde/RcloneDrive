@@ -39,6 +39,17 @@ const updateRepository = "younland/RcloneDrive"
 // 默认 30s 总超时会掐断慢速网络下的下载；完整性靠 release 附带的 checksums 校验兜底。
 const updateHTTPTimeout = 30 * time.Minute
 
+// updateTransport 构建更新器的 HTTP Transport：优先走 Windows 系统代理。
+// Go 的 HTTP 客户端默认不读系统代理（浏览器走代理），直连 github.com 被
+// 网络阻断时检查更新会超时；无系统代理时维持默认行为（读 HTTPS_PROXY 环境变量）。
+func updateTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if u := systemProxy(); u != nil {
+		transport.Proxy = http.ProxyURL(u)
+	}
+	return transport
+}
+
 // UpdateStatus 描述当前更新状态，随 update:* 事件推给前端，也是 Status() 的返回。
 type UpdateStatus struct {
 	Current    string `json:"current"`
@@ -99,7 +110,7 @@ func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceO
 		// release 附带 checksums.txt：下载被中断（连接被干净地提前 EOF）时
 		// 提供商会当作成功返回，校验和是兜住部分文件的最后防线
 		ChecksumAsset: "checksums.txt",
-		HTTPClient:    &http.Client{Timeout: updateHTTPTimeout},
+		HTTPClient:    &http.Client{Timeout: updateHTTPTimeout, Transport: updateTransport()},
 	})
 	if err != nil {
 		log.Printf("更新器初始化失败: %v", err)

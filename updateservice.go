@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -80,6 +81,9 @@ type UpdateService struct {
 	mu       sync.Mutex
 	release  *updater.Release // 最近一次发现的新版本
 	progress updater.Progress // 最近一次下载进度
+	// stagedInstaller 是安装版已下载并校验通过的 NSIS 安装包路径；
+	// 非空时 Restart 走「退出 → 静默安装 → 重启应用」而不是二进制替换。
+	stagedInstaller string
 
 	// autoStarted 防止重复自动下载（周期检查与手动检查可能同时命中可用事件）。
 	autoStarted atomic.Bool
@@ -109,8 +113,10 @@ func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceO
 	}
 
 	gh, err := github.New(github.Config{
-		Repository:   updateRepository,
-		AssetMatcher: portableAssetMatcher,
+		Repository: updateRepository,
+		// 安装版（NSIS）选 setup.exe 走安装流程，便携版选裸二进制走替换流程；
+		// updater 的下载校验（checksums.txt）对两种资产都生效。
+		AssetMatcher: updateAssetMatcher,
 		// release 附带 checksums.txt：下载被中断（连接被干净地提前 EOF）时
 		// 提供商会当作成功返回，校验和是兜住部分文件的最后防线
 		ChecksumAsset: "checksums.txt",
@@ -134,8 +140,28 @@ func (s *UpdateService) ServiceStartup(_ context.Context, _ application.ServiceO
 	}
 
 	s.subscribe()
+	s.sweepStaleUpdateArtifacts()
 	go s.autoCheckLoop()
 	return nil
+}
+
+// sweepStaleUpdateArtifacts 清理上一次二进制替换升级遗留的 <exe>.old.* 文件。
+// Wails 的替换助手在映像仍被内核持有时删不掉它们，只约定「下次升级时顺手清」，
+// 导致文件无限期残留；应用重启后旧映像必然已释放，这里兜底删除。
+func (s *UpdateService) sweepStaleUpdateArtifacts() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	matches, err := filepath.Glob(exe + ".old.*")
+	if err != nil {
+		return
+	}
+	for _, m := range matches {
+		if err := os.Remove(m); err != nil {
+			log.Printf("清理更新残留失败 %s: %v", m, err)
+		}
+	}
 }
 
 // autoCheckLoop 按固定周期复查更新；每次 tick 重新读设置，
@@ -193,11 +219,17 @@ func (s *UpdateService) subscribe() {
 
 		// 自动下载安装；state 已经是 downloading 说明是 CheckAndInstall 带起来的，别重复下载
 		if s.app.Updater.State() == updater.StateAvailable && s.autoStarted.CompareAndSwap(false, true) {
-			go func() {
-				if err := s.app.Updater.DownloadAndInstall(context.Background()); err != nil {
-					log.Printf("自动下载更新失败: %v", err)
-				}
-			}()
+			if isInstalledBuild() {
+				// 安装版：下载 NSIS 安装包并校验，重启时由安装包接管升级
+				//（不能用二进制替换——那会把安装版退化成便携版，还会留下 .old 残留）
+				go s.downloadInstaller(rel)
+			} else {
+				go func() {
+					if err := s.app.Updater.DownloadAndInstall(context.Background()); err != nil {
+						log.Printf("自动下载更新失败: %v", err)
+					}
+				}()
+			}
 		}
 	})
 
@@ -254,6 +286,11 @@ func (s *UpdateService) verifyDownloaded() error {
 	if path == "" {
 		return errors.New("未找到已下载的更新文件")
 	}
+	return verifyFileDigest(path, release.Verification.Digest)
+}
+
+// verifyFileDigest 计算文件的 SHA-256 并与 release 公布的摘要比对。
+func verifyFileDigest(path string, digest []byte) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("打开已下载的更新文件失败: %w", err)
@@ -263,20 +300,131 @@ func (s *UpdateService) verifyDownloaded() error {
 	if _, err := io.Copy(h, f); err != nil {
 		return fmt.Errorf("读取已下载的更新文件失败: %w", err)
 	}
-	if !bytes.Equal(h.Sum(nil), release.Verification.Digest) {
+	if !bytes.Equal(h.Sum(nil), digest) {
 		return errors.New("已下载文件与发布版本校验和不一致")
 	}
 	return nil
 }
 
+// downloadInstaller 安装版的下载流程：把 NSIS 安装包下载到临时目录，
+// 校验 SHA-256 通过后经 update:ready 事件等待用户重启，重启时执行静默安装。
+// Wails updater 的 DownloadAndInstall 只会做二进制替换，安装版必须走安装包。
+func (s *UpdateService) downloadInstaller(rel *updater.Release) {
+	urlStr, _ := rel.Metadata["github.asset.url"].(string)
+	if urlStr == "" {
+		s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "download", Message: "缺少安装包下载地址"})
+		s.autoStarted.Store(false)
+		return
+	}
+	dir, err := os.MkdirTemp("", "rclonedrive-update")
+	if err != nil {
+		s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "download", Message: err.Error()})
+		s.autoStarted.Store(false)
+		return
+	}
+	path := filepath.Join(dir, rel.Artifact.Filename)
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+
+	s.mu.Lock()
+	s.progress = updater.Progress{Total: rel.Artifact.Size}
+	s.mu.Unlock()
+	s.emit(updateProgressEvent, s.progress)
+
+	if err = s.downloadFile(urlStr, path, rel.Artifact.Size); err != nil {
+		s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "download", Message: err.Error()})
+		s.autoStarted.Store(false)
+		return
+	}
+	if rel.Verification == nil || len(rel.Verification.Digest) == 0 {
+		err = errors.New("release 未提供校验信息（checksums.txt），无法确认安装包来源")
+		s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "verify", Message: err.Error()})
+		s.autoStarted.Store(false)
+		return
+	}
+	if err = verifyFileDigest(path, rel.Verification.Digest); err != nil {
+		s.emit(updateErrorEvent, UpdateErrorEvent{Stage: "verify", Message: err.Error()})
+		s.autoStarted.Store(false)
+		return
+	}
+
+	s.mu.Lock()
+	s.stagedInstaller = path
+	s.mu.Unlock()
+	s.verified.Store(true)
+	s.emitStatus(updateReadyEvent)
+	notifyUserTo(s.currentToastTarget(), "success", "更新已就绪", "重启 RcloneDrive 后将自动完成安装")
+}
+
+// downloadFile 下载 url 到 path，期间按 ~500ms 节流推送进度事件。
+func (s *UpdateService) downloadFile(urlStr, path string, total int64) error {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: updateHTTPTimeout, Transport: updateTransport()}).Do(req)
+	if err != nil {
+		return fmt.Errorf("下载安装包失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("下载安装包失败: HTTP %d", resp.StatusCode)
+	}
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	var written int64
+	var lastEmit time.Time
+	buf := make([]byte, 256*1024)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := out.Write(buf[:n]); werr != nil {
+				return werr
+			}
+			written += int64(n)
+			if time.Since(lastEmit) > 500*time.Millisecond {
+				s.reportProgress(written, total)
+				lastEmit = time.Now()
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return fmt.Errorf("下载安装包中断: %w", rerr)
+		}
+	}
+	s.reportProgress(written, total)
+	return nil
+}
+
+func (s *UpdateService) reportProgress(written, total int64) {
+	s.mu.Lock()
+	s.progress = updater.Progress{Written: written, Total: total}
+	s.mu.Unlock()
+	s.emit(updateProgressEvent, s.progress)
+}
+
 // Status 返回当前更新状态（设置窗口打开时初始化用）。
 func (s *UpdateService) Status() UpdateStatus {
-	status := UpdateStatus{Current: appVersion, Verified: s.verified.Load()}
+	s.mu.Lock()
+	staged := s.stagedInstaller
+	s.mu.Unlock()
+	status := UpdateStatus{Current: appVersion, Verified: s.verified.Load(), Downloaded: staged != ""}
 	if s.app == nil || s.app.Updater == nil {
 		return status
 	}
 	status.State = string(s.app.Updater.State())
-	status.Downloaded = s.app.Updater.DownloadedPath() != ""
+	if !status.Downloaded {
+		status.Downloaded = s.app.Updater.DownloadedPath() != ""
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -323,7 +471,21 @@ func (s *UpdateService) checkManual(target string) {
 }
 
 // Restart 重启应用使更新生效（仅在 update-ready 且二次校验通过后可用）。
+// 安装版：退出后由安装包静默接管（installAfterExit），不替换二进制。
 func (s *UpdateService) Restart() error {
+	s.mu.Lock()
+	staged := s.stagedInstaller
+	s.mu.Unlock()
+	if staged != "" {
+		if !s.verified.Load() {
+			return errors.New("安装包校验未通过，已阻止重启生效")
+		}
+		if err := installAfterExit(staged); err != nil {
+			return err
+		}
+		s.app.Quit()
+		return nil
+	}
 	if s.app == nil || s.app.Updater == nil {
 		return nil
 	}
@@ -393,6 +555,36 @@ func portableAssetMatcher(req updater.CheckRequest, assets []github.ReleaseAsset
 		if a.Name == filtered[idx].Name {
 			return i
 		}
+	}
+	return -1
+}
+
+// updateAssetMatcher 按当前分发形态选资产：安装版（NSIS）选 setup.exe
+// 走安装流程，便携版选裸二进制走替换流程。
+func updateAssetMatcher(req updater.CheckRequest, assets []github.ReleaseAsset) int {
+	if isInstalledBuild() {
+		return setupAssetMatcher(req, assets)
+	}
+	return portableAssetMatcher(req, assets)
+}
+
+// setupAssetMatcher 选出 NSIS 安装包资产（要求同时命中平台与架构）。
+// 安装版自更新靠安装包接管，选不到就返回 -1（该版本不提供安装包更新）。
+func setupAssetMatcher(req updater.CheckRequest, assets []github.ReleaseAsset) int {
+	plat := strings.ToLower(req.Platform)
+	arch := strings.ToLower(req.Arch)
+	for i, a := range assets {
+		name := strings.ToLower(a.Name)
+		if !strings.Contains(name, "-setup.") && !strings.Contains(name, "_setup.") {
+			continue
+		}
+		if plat != "" && !strings.Contains(name, plat) {
+			continue
+		}
+		if arch != "" && !containsArch(name, arch) {
+			continue
+		}
+		return i
 	}
 	return -1
 }

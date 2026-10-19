@@ -111,24 +111,27 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $gcc)
           echo "gcc resolved to: $gcc"
 
-      # Windows runner 不保证自带 NSIS（参照旧项目流水线）：直接 choco 安装
-      # （已装则快速跳过）并把安装目录加入 PATH；同时把解析出的路径经
-      # MAKENSIS 环境变量交给 Taskfile，双保险。choco 的 nsis 包默认装到
-      # C:\Program Files (x86)\NSIS。
-      - name: 安装 NSIS
+      # chocolatey 源在 runner 上经常 503 不可用，不依赖 choco。
+      # mygo build 会自己下载 NSIS 3.13（GitHub 源，runner 可达）到用户缓存：
+      #   %LOCALAPPDATA%\mygo\nsis-3.13\Bin\makensis.exe
+      # 先编译（触发 mygo 下载 NSIS），解析出路径后经 MAKENSIS 环境变量
+      # 交给 package:installer 打管理员级安装包。
+      - name: 编译并暂存（mygo 会下载自带 NSIS）
+        shell: bash
+        run: task package:build
+
+      - name: 解析 mygo 下载的 NSIS
         shell: pwsh
         run: |
-          choco install nsis --yes --no-progress
-          $nsisDir = 'C:\Program Files (x86)\NSIS'
-          Add-Content -Path $env:GITHUB_PATH -Value $nsisDir
-          $makensis = Join-Path $nsisDir 'makensis.exe'
-          if (-not (Test-Path $makensis)) { throw "choco 安装后仍未找到 $makensis" }
-          & $makensis /VERSION
-          echo "MAKENSIS=$makensis" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $exe = Join-Path $env:LOCALAPPDATA 'mygo\nsis-3.13\Bin\makensis.exe'
+          if (-not (Test-Path $exe)) { throw "未找到 mygo 下载的 NSIS: $exe" }
+          & $exe /VERSION
+          echo "MAKENSIS=$exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          echo "makensis resolved to: $exe"
 
-      - name: 构建并打包
+      - name: 打管理员级安装包（含 WinFsp 静默安装）
         shell: bash
-        run: task package
+        run: task package:installer
 
       - name: 收集产物（更新器按资产名匹配 setup/portable）
         shell: bash

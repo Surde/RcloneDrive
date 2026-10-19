@@ -76,7 +76,7 @@ tasks:
       - '"{{.MAKENSIS}}" /DVERSION={{.APP_VERSION}} "{{.ROOT_DIR}}\build\windows\installer.nsi"'
 
   package:darwin:
-    desc: 交叉打包 macOS（无 cgo：不支持挂载；签名与 dmg 需要 macOS）
+    desc: 交叉打包 macOS（无 cgo：不支持挂载；dmg 需在 macOS 上构建）
     deps: [sync:version]
     env:
       CGO_ENABLED: '0'
@@ -85,13 +85,13 @@ tasks:
       - go tool mygo build -platform darwin/universal
 
   package:linux:
-    desc: 交叉打包 Linux（无 cgo：不支持挂载；deb 需要 dpkg-deb）
+    desc: 交叉打包 Linux（无 cgo：不支持挂载；deb 需要 dpkg-deb；ARCH 默认 amd64）
     deps: [sync:version]
     env:
       CGO_ENABLED: '0'
       GOFLAGS: '-tags=production'
     cmds:
-      - go tool mygo build -platform linux/amd64
+      - go tool mygo build -platform linux/{{.ARCH | default "amd64"}}
 
   package:all:
     desc: 打包全部平台（仅 Windows 版支持挂载）

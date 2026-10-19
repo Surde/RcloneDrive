@@ -1,0 +1,78 @@
+name: Check
+
+# 推送与 PR 的静态检查：task check（go vet + mygo vet + 测试），
+# 外加 Windows 的 cmount 挂载构建验证（cgo + 仓库自带 WinFsp 头文件）。
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  TASK_VERSION: "3.54.0"
+
+jobs:
+  check:
+    name: 静态检查与测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 安装 Task
+        uses: arduino/setup-task@v2
+        with:
+          version: ${{ env.TASK_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: go vet + mygo vet + 测试
+        run: task check
+
+  windows-cmount:
+    name: Windows cmount 构建
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 安装 Task
+        uses: arduino/setup-task@v2
+        with:
+          version: ${{ env.TASK_VERSION }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 安装 MinGW-w64 gcc
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: mingw-w64-ucrt-x86_64-gcc
+
+      - name: 解析 MinGW gcc 路径
+        shell: pwsh
+        run: |
+          $gcc = $null
+          foreach ($root in @("C:\msys64", "$env:RUNNER_TEMP\msys64", "$env:RUNNER_TEMP\msys\msys64")) {
+            $candidate = Join-Path $root "ucrt64\bin\gcc.exe"
+            if (Test-Path $candidate) { $gcc = $candidate; break }
+          }
+          if (-not $gcc) { throw "未找到 MinGW gcc" }
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $gcc)
+
+      - name: cmount 挂载构建
+        shell: bash
+        run: CGO_ENABLED=1 CPATH="${GITHUB_WORKSPACE}/third_party/winfsp/inc/fuse" go build -tags cmount ./...

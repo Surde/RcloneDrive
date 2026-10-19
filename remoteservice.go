@@ -1,0 +1,289 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+
+	"rclonedrive/internal/rclone"
+)
+
+var remoteNamePattern = regexp.MustCompile(`^\S+$`)
+
+// Remote 描述一个远程存储及其本地挂载偏好。
+// Options 只作为 Create/Update 的请求负载在进程内传递，不落盘：
+// 凭证明文存 remotes.json 会被本机其他进程收割，配置只保存在 rclone.conf（密码已混淆）。
+type Remote struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	MountPoint  string `json:"mountPoint"`
+	AutoConnect bool   `json:"autoConnect"`
+	ReadOnly    bool   `json:"readOnly"`
+	// Insecure 为 true 时该驱动器的挂载跳过 TLS 证书校验（自签名证书用）
+	Insecure bool              `json:"insecure"`
+	Options  map[string]string `json:"options,omitempty"`
+}
+
+// RemoteService 管理远程存储的增删改查与连接测试。
+// 移植自 Wails 版：去掉了 application.App 依赖与 "remotes:changed" 事件，
+// 列表变化通过 OnChange 回调多播，UI 主动调用 List/Get 等查询方法取数。
+type RemoteService struct {
+	mu        sync.RWMutex
+	remotes   []Remote
+	metaPath  string
+	mounts    *rclone.MountManager
+	observers []func()
+}
+
+// NewRemoteService 创建服务，元数据存于 <ConfigDir>/remotes.json。
+func NewRemoteService(mounts *rclone.MountManager) *RemoteService {
+	return &RemoteService{
+		metaPath: filepath.Join(rclone.ConfigDir(), "remotes.json"),
+		mounts:   mounts,
+	}
+}
+
+// Start 启动时加载本地元数据（对应旧版的 ServiceStartup）。
+func (s *RemoteService) Start() error {
+	return s.load()
+}
+
+// OnChange 注册远程列表变化回调（用于刷新托盘菜单与界面）；可注册多个，互不覆盖。
+func (s *RemoteService) OnChange(fn func()) {
+	if fn == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observers = append(s.observers, fn)
+}
+
+func (s *RemoteService) notifyChange() {
+	s.mu.RLock()
+	observers := make([]func(), len(s.observers))
+	copy(observers, s.observers)
+	s.mu.RUnlock()
+	// 在锁外回调，避免观察者里再次访问 s.mu 造成死锁
+	for _, fn := range observers {
+		if fn == nil {
+			continue
+		}
+		fn()
+	}
+}
+
+func (s *RemoteService) load() error {
+	data, err := os.ReadFile(s.metaPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("读取远程存储列表失败: %w", err)
+	}
+	var remotes []Remote
+	if err := json.Unmarshal(data, &remotes); err != nil {
+		return fmt.Errorf("解析远程存储列表失败: %w", err)
+	}
+	// 迁移旧版本：Options 曾以明文落盘，这里清掉内存副本并立即重写文件。
+	// 配置本体在 rclone.conf（密码已混淆），编辑时经 Options() 从那里回读。
+	stripped := false
+	for i := range remotes {
+		if len(remotes[i].Options) > 0 {
+			remotes[i].Options = nil
+			stripped = true
+		}
+	}
+	s.mu.Lock()
+	s.remotes = remotes
+	s.mu.Unlock()
+	if stripped {
+		return s.save()
+	}
+	return nil
+}
+
+func (s *RemoteService) save() error {
+	s.mu.RLock()
+	// 凭据不落盘：marshal 前剥离 Options（见 Remote 结构注释）
+	stored := make([]Remote, len(s.remotes))
+	copy(stored, s.remotes)
+	s.mu.RUnlock()
+	for i := range stored {
+		stored[i].Options = nil
+	}
+	data, err := json.MarshalIndent(stored, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.metaPath), 0o700); err != nil {
+		return err
+	}
+	// 0600：文件里不再有凭据，仍按可能含敏感偏好的配置处理
+	if err := os.WriteFile(s.metaPath, data, 0o600); err != nil {
+		return err
+	}
+	// 列表变化后通知观察者（刷新托盘菜单与界面）
+	s.notifyChange()
+	return nil
+}
+
+// List 返回所有远程存储。
+func (s *RemoteService) List() []Remote {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Remote, len(s.remotes))
+	copy(out, s.remotes)
+	return out
+}
+
+// Get 按名称查找远程存储。
+func (s *RemoteService) Get(name string) (Remote, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, remote := range s.remotes {
+		if remote.Name == name {
+			return remote, true
+		}
+	}
+	return Remote{}, false
+}
+
+// Options 返回某个远程存储的完整配置项（从 rclone.conf 回读，密码字段已解密），
+// 供编辑表单回填。凭据不落 remotes.json（见 Remote 结构注释）。
+func (s *RemoteService) Options(name string) (map[string]string, error) {
+	if _, ok := s.Get(name); !ok {
+		return nil, fmt.Errorf("远程存储不存在: %s", name)
+	}
+	return rclone.ReadRemote(name)
+}
+
+// BackendCatalog 返回按用途分组的连接类型目录（rclone 全部后端），供 UI 渲染左侧树。
+func (s *RemoteService) BackendCatalog() []rclone.BackendGroup {
+	return rclone.Catalog()
+}
+
+// BackendFields 返回某个连接类型的配置字段（基本 + 高级），供 UI 渲染表单。
+func (s *RemoteService) BackendFields(typ string) ([]rclone.Field, error) {
+	return rclone.Fields(typ)
+}
+
+// TypeLabels 返回连接类型 → 界面名的映射，供主界面显示协议名。
+func (s *RemoteService) TypeLabels() map[string]string {
+	labels := make(map[string]string)
+	for _, group := range rclone.Catalog() {
+		for _, item := range group.Types {
+			labels[item.Type] = item.Label
+		}
+	}
+	return labels
+}
+
+// Create 校验并新建远程存储，敏感字段写入 INI 前会做 rclone 混淆。
+func (s *RemoteService) Create(remote Remote) error {
+	if err := s.validate(remote, true); err != nil {
+		return err
+	}
+	if err := s.writeConfigSection(remote); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.remotes = append(s.remotes, remote)
+	s.mu.Unlock()
+	return s.save()
+}
+
+// Update 校验并更新远程存储；已连接的驱动器需要先断开连接，避免连接中途改写配置。
+func (s *RemoteService) Update(remote Remote) error {
+	if err := s.validate(remote, false); err != nil {
+		return err
+	}
+	if s.mounts.IsMounted(remote.Name) {
+		return fmt.Errorf("「%s」已连接，请先断开连接再编辑", remote.Name)
+	}
+	if err := s.writeConfigSection(remote); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for i := range s.remotes {
+		if s.remotes[i].Name == remote.Name {
+			s.remotes[i] = remote
+			break
+		}
+	}
+	s.mu.Unlock()
+	return s.save()
+}
+
+// Delete 删除远程存储：卸载挂载、移除配置节与本地元数据。
+func (s *RemoteService) Delete(name string) error {
+	if _, ok := s.Get(name); !ok {
+		return fmt.Errorf("远程存储不存在: %s", name)
+	}
+	if s.mounts.IsMounted(name) {
+		if err := s.mounts.Unmount(name); err != nil {
+			return err
+		}
+	}
+	if err := rclone.DeleteRemote(name); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for i := range s.remotes {
+		if s.remotes[i].Name == name {
+			s.remotes = append(s.remotes[:i], s.remotes[i+1:]...)
+			break
+		}
+	}
+	s.mu.Unlock()
+	return s.save()
+}
+
+// Test 在进程内建立连接并列举根目录，验证远程存储可用。
+func (s *RemoteService) Test(name string) error {
+	remote, ok := s.Get(name)
+	if !ok {
+		return fmt.Errorf("远程存储不存在: %s", name)
+	}
+	return rclone.TestRemote(name, remote.Insecure)
+}
+
+func (s *RemoteService) validate(remote Remote, creating bool) error {
+	name := strings.TrimSpace(remote.Name)
+	if name == "" {
+		return errors.New("名称不能为空")
+	}
+	if !remoteNamePattern.MatchString(name) {
+		return fmt.Errorf("名称不能包含空白字符: %q", remote.Name)
+	}
+	fields, err := rclone.Fields(remote.Type)
+	if err != nil {
+		return fmt.Errorf("不支持的协议类型: %s", remote.Type)
+	}
+	_, exists := s.Get(name)
+	if creating && exists {
+		return fmt.Errorf("远程存储已存在: %s", name)
+	}
+	if !creating && !exists {
+		return fmt.Errorf("远程存储不存在: %s", name)
+	}
+	for _, field := range fields {
+		value := strings.TrimSpace(remote.Options[field.Key])
+		if field.Required && value == "" {
+			return fmt.Errorf("缺少必填字段: %s", field.Label)
+		}
+	}
+	return nil
+}
+
+// writeConfigSection 将远程存储的选项写入 rclone.conf，密码类字段由 rclone 自动混淆。
+func (s *RemoteService) writeConfigSection(remote Remote) error {
+	if _, err := rclone.Fields(remote.Type); err != nil {
+		return fmt.Errorf("不支持的协议类型: %s", remote.Type)
+	}
+	return rclone.SaveRemote(remote.Name, remote.Type, remote.Options)
+}

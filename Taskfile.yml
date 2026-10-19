@@ -1,0 +1,114 @@
+version: '3'
+
+# RcloneDrive 任务入口：
+#   task dev       本地开发（Go 变更自动重建重启，挂载可用）
+#   task build     裸 exe（bin/，无安装包；便携版就地替换更新的产物）
+#   task package   生产打包（NSIS 安装包 + 便携 exe，输出 build/）
+#
+# 版本号唯一来源是本文件 APP_VERSION 变量；改版本号用
+#   task sync:version APP_VERSION=1.2.3
+# 它会同步写进 mygo.json —— mygo dev/build 的运行时版本、打包元数据
+# 与安装包文件名都读它（应用内通过 mygo.App.Version() 取得）。
+#
+# cmount 挂载（Windows/WinFsp）需要 cgo：相关任务自动设 CGO_ENABLED=1
+# 并把 CPATH 指向仓库自带头文件（third_party/winfsp/inc/fuse），gcc 需
+# 在 PATH 中（winget 安装 WinLibs 即可）。可用 task xxx CGO_ENABLED=0
+# 关闭 cgo（产物无法挂载）。
+
+vars:
+  APP_NAME: rclonedrive
+  APP_VERSION: '{{.APP_VERSION | default "0.2.0"}}'
+  BIN_DIR: bin
+  # WinFsp 头文件目录：可用环境变量 WINFSP_INC 指向外部 SDK。
+  WINFSP_INC_DIR: '{{.WINFSP_INC | default (printf "%s/third_party/winfsp/inc/fuse" .ROOT_DIR)}}'
+  # 开发构建不带 production tag（自动更新禁用）；生产构建带（启用）。
+  DEV_TAGS: cmount
+  PROD_TAGS: production,cmount
+
+tasks:
+  default:
+    desc: 列出全部任务
+    cmds:
+      - task --list
+
+  dev:
+    desc: 开发模式运行（代码变更自动重建并重启应用）
+    env:
+      CGO_ENABLED: '{{.CGO_ENABLED | default "1"}}'
+      CPATH: '{{.WINFSP_INC_DIR}}'
+      GOFLAGS: '-tags={{.DEV_TAGS}}'
+    cmds:
+      - go tool mygo dev
+
+  run:
+    desc: 直接 go run 运行（开发构建，挂载可用）
+    env:
+      CGO_ENABLED: '{{.CGO_ENABLED | default "1"}}'
+      CPATH: '{{.WINFSP_INC_DIR}}'
+      GOFLAGS: '-tags={{.DEV_TAGS}}'
+    cmds:
+      - go run .
+
+  build:
+    desc: 构建裸 exe 到 bin/（生产 tag + 版本注入，无安装包）
+    env:
+      CGO_ENABLED: '{{.CGO_ENABLED | default "1"}}'
+      CPATH: '{{.WINFSP_INC_DIR}}'
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -trimpath -tags '{{.PROD_TAGS}}' -ldflags "-s -w -H=windowsgui -X main.appVersion={{.APP_VERSION}}" -o '{{.BIN_DIR}}/{{.APP_NAME}}.exe' .
+
+  package:
+    desc: 生产打包 Windows（cmount 挂载需要 cgo + WinFsp 头文件；
+      NSIS 安装包 + 便携 exe，输出 build/windows-amd64/）
+    deps: [sync:version]
+    env:
+      CGO_ENABLED: '{{.CGO_ENABLED | default "1"}}'
+      CPATH: '{{.WINFSP_INC_DIR}}'
+      GOFLAGS: '-tags={{.PROD_TAGS}}'
+    cmds:
+      - go tool mygo build
+
+  package:darwin:
+    desc: 交叉打包 macOS（无 cgo：不支持挂载；签名与 dmg 需要 macOS）
+    deps: [sync:version]
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: '-tags=production'
+    cmds:
+      - go tool mygo build -platform darwin/universal
+
+  package:linux:
+    desc: 交叉打包 Linux（无 cgo：不支持挂载；deb 需要 dpkg-deb）
+    deps: [sync:version]
+    env:
+      CGO_ENABLED: '0'
+      GOFLAGS: '-tags=production'
+    cmds:
+      - go tool mygo build -platform linux/amd64
+
+  package:all:
+    desc: 打包全部平台（仅 Windows 版支持挂载）
+    deps: [package, package:darwin, package:linux]
+
+  sync:version:
+    desc: 把 APP_VERSION 写入 mygo.json（打包版本来源）
+    cmds:
+      - go run ./tools/syncversion -version '{{.APP_VERSION}}'
+
+  check:
+    desc: 静态检查与测试（go vet + mygo vet + 单元/视图测试）
+    cmds:
+      - go vet ./...
+      - go tool mygo vet .
+      - go test ./...
+
+  doctor:
+    desc: 检查 mygo 开发环境是否就绪
+    cmds:
+      - go tool mygo doctor
+
+  clean:
+    desc: 清理构建产物（bin/、build/、.mygo/）
+    cmds:
+      - powershell -NoProfile -Command "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue {{.BIN_DIR}}, build, .mygo"

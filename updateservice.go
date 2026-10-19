@@ -64,9 +64,8 @@ const updateHTTPTimeout = 30 * time.Minute
 // 各平台系统代理来源见 proxy_*.go：Windows 注册表、macOS scutil、Linux gsettings/环境变量。
 func updateTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if u := systemProxy(); u != nil {
-		transport.Proxy = http.ProxyURL(u)
-	}
+	// 动态回调而非启动时一次性读取：系统代理开启状态变化后 TTL 内生效。
+	transport.Proxy = proxyForRequest
 	return transport
 }
 

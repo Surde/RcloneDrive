@@ -44,3 +44,6 @@ func gsettingsGet(schema, key string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// localProxyFallback 非 Windows 平台没有本机代理兜底，返回 nil。
+func localProxyFallback() *url.URL { return nil }

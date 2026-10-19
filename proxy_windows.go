@@ -3,8 +3,11 @@
 package main
 
 import (
+	"net"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -57,4 +60,68 @@ func systemProxy() *url.URL {
 		return nil
 	}
 	return u
+}
+
+var localProxyCache struct {
+	sync.Mutex
+	u      *url.URL
+	probed time.Time
+}
+
+const localProxyCacheTTL = 30 * time.Second
+
+// localProxyFallback 系统代理未启用时的本机代理兜底：注册表里残留的
+// ProxyServer（如 Clash 的 127.0.0.1:7897）在本机端口可连通时作为代理
+// 使用。覆盖「系统代理开关没开 / TUN 未接管、但本机代理客户端在跑」的
+// 常见场景（浏览器走插件代理不受影响，而应用直连被网络阻断）。
+// 只探测回环地址，结果缓存 30 秒；代理不在时回环端口连接被拒是瞬时的。
+func localProxyFallback() *url.URL {
+	localProxyCache.Lock()
+	defer localProxyCache.Unlock()
+	if time.Since(localProxyCache.probed) < localProxyCacheTTL {
+		return localProxyCache.u
+	}
+	localProxyCache.probed = time.Now()
+	localProxyCache.u = probeLocalProxy()
+	return localProxyCache.u
+}
+
+func probeLocalProxy() *url.URL {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.QUERY_VALUE)
+	if err != nil {
+		return nil
+	}
+	defer key.Close()
+	server, _, err := key.GetStringValue("ProxyServer")
+	if err != nil {
+		return nil
+	}
+	// 与 systemProxy 相同的解析，但只看整体 host:port 形式（含 = 的分协议
+	// 形式只在系统代理启用时有意义）
+	hostport := strings.TrimSpace(server)
+	if hostport == "" || strings.Contains(hostport, "=") {
+		return nil
+	}
+	if strings.Contains(hostport, "://") {
+		u, err := url.Parse(hostport)
+		if err != nil || u.Host == "" {
+			return nil
+		}
+		hostport = u.Host
+	}
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || !isLoopback(host) {
+		return nil
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 300*time.Millisecond)
+	if err != nil {
+		return nil
+	}
+	conn.Close()
+	return &url.URL{Scheme: "http", Host: net.JoinHostPort(host, port)}
+}
+
+func isLoopback(host string) bool {
+	h := strings.Trim(strings.ToLower(host), "[]")
+	return h == "127.0.0.1" || h == "localhost" || h == "::1"
 }

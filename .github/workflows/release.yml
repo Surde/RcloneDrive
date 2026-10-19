@@ -111,14 +111,30 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value (Split-Path $gcc)
           echo "gcc resolved to: $gcc"
 
-      # GitHub windows 镜像自带 NSIS；缺失时 choco 补装（装到 Taskfile
-      # MAKENSIS 默认值的同一路径）。
-      - name: 确保 NSIS 可用
+      # NSIS 在 runner 上的位置不固定（镜像自带 / choco / mygo 自下载），
+      # 这里动态解析真实路径，经 MAKENSIS 环境变量传给 Taskfile；
+      # 找不到才 choco 补装并重解析。mygo 编译与打包不受影响。
+      - name: 解析 NSIS（makensis）
         shell: pwsh
         run: |
-          if (-not (Test-Path 'C:\Program Files (x86)\NSIS\makensis.exe')) {
-            choco install nsis --yes --no-progress
+          function Resolve-Makensis {
+            $cmd = Get-Command makensis -CommandType Application -ErrorAction SilentlyContinue |
+                   Select-Object -First 1 -ExpandProperty Source
+            if ($cmd) { return $cmd }
+            foreach ($p in @(
+              'C:\Program Files (x86)\NSIS\makensis.exe',
+              'C:\Program Files\NSIS\makensis.exe'
+            )) { if (Test-Path $p) { return $p } }
+            return $null
           }
+          $makensis = Resolve-Makensis
+          if (-not $makensis) {
+            choco install nsis --yes --no-progress
+            $makensis = Resolve-Makensis
+          }
+          if (-not $makensis) { throw "未找到 makensis（NSIS 安装位置异常）" }
+          echo "MAKENSIS=$makensis" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          echo "makensis resolved to: $makensis"
 
       - name: 构建并打包
         shell: bash

@@ -17,10 +17,12 @@ import (
 )
 
 // winfsp-2.1.25156.msi 内嵌的 WinFsp 官方安装包（GPLv3，许可全文见
-// resources/winfsp.LICENSE.txt，随打包资源一并发行）。首次挂载检测到
-// 系统未安装 WinFsp 时提取并提权静默安装（方案：免独立下载安装器）。
+// third_party/winfsp/winfsp.LICENSE.txt）。放在 third_party/ 而非
+// resources/：mygo 打包只拷贝 resources/，WinFsp 仅 Windows 需要，
+// 避免 linux/darwin 的包携带这几 MB 安装包。首次挂载检测到系统未
+// 安装 WinFsp 时提取并提权静默安装（方案：免独立下载安装器）。
 //
-//go:embed resources/winfsp-2.1.25156.msi
+//go:embed third_party/winfsp/winfsp-2.1.25156.msi
 var winfspMSI []byte
 
 const winfspMSIName = "winfsp-2.1.25156.msi"

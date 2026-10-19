@@ -24,12 +24,13 @@ task sync:version APP_VERSION=x.y.z   # 改版本号
 ## Windows 挂载与 WinFsp
 
 挂载依赖 [WinFsp](https://winfsp.dev/)（内核文件系统代理）。官方 MSI
-（`resources/winfsp-2.1.25156.msi`）已内嵌进应用：首次点击「连接」时若
-检测到系统未安装，会提取并经 UAC 静默安装，无需用户单独下载安装器。
+已内嵌进应用（`third_party/winfsp/winfsp-2.1.25156.msi`）：首次点击
+「连接」时若检测到系统未安装，会提取并经 UAC 静默安装，无需用户单独
+下载安装器。
 
 ## 第三方组件
 
 - [rclone](https://rclone.org/)（MIT）— 云存储引擎
 - [WinFsp](https://winfsp.dev/)（GPLv3，含链接例外，许可全文见
-  `resources/winfsp.LICENSE.txt`）— Windows 文件系统代理
+  `third_party/winfsp/winfsp.LICENSE.txt`）— Windows 文件系统代理
 - [mygo](https://github.com/egoist/mygo) — 桌面应用框架

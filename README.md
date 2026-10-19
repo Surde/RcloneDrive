@@ -24,9 +24,12 @@ task sync:version APP_VERSION=x.y.z   # 改版本号
 ## Windows 挂载与 WinFsp
 
 挂载依赖 [WinFsp](https://winfsp.dev/)（内核文件系统代理）。官方 MSI
-已内嵌进应用（`third_party/winfsp/winfsp-2.1.25156.msi`）：首次点击
-「连接」时若检测到系统未安装，会提取并经 UAC 静默安装，无需用户单独
-下载安装器。
+已内嵌进应用（`third_party/winfsp/winfsp-2.1.25156.msi`）：
+
+- **setup 安装时**：安装包为管理员级 NSIS（`build/windows/installer.nsi`），
+  安装应用文件的同时静默安装 WinFsp（如系统未安装），全程一次 UAC；
+- **便携版/免安装场景**：首次点击「连接」时若检测到未安装，应用会提取
+  内嵌 MSI 并经 UAC 静默安装。
 
 ## 第三方组件
 

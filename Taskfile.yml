@@ -60,14 +60,20 @@ tasks:
 
   package:
     desc: 生产打包 Windows（cmount 挂载需要 cgo + WinFsp 头文件；
-      NSIS 安装包 + 便携 exe，输出 build/windows-amd64/）
+      NSIS 管理员级安装包，安装时静默装 WinFsp，输出 build/windows-amd64/）
     deps: [sync:version]
     env:
       CGO_ENABLED: '{{.CGO_ENABLED | default "1"}}'
       CPATH: '{{.WINFSP_INC_DIR}}'
       GOFLAGS: '-tags={{.PROD_TAGS}}'
+    vars:
+      # makensis 不在 PATH 时用绝对路径：task package MAKENSIS="C:\...\makensis.exe"
+      MAKENSIS: '{{.MAKENSIS | default "C:/Program Files (x86)/NSIS/makensis.exe"}}'
     cmds:
+      # mygo 负责编译与暂存（其自带的按用户级安装器会被下一步覆盖）
       - go tool mygo build
+      # 自定义管理员级安装器：应用文件 + WinFsp 静默安装（setup 阶段一次 UAC）
+      - '"{{.MAKENSIS}}" /DVERSION={{.APP_VERSION}} "{{.ROOT_DIR}}\build\windows\installer.nsi"'
 
   package:darwin:
     desc: 交叉打包 macOS（无 cgo：不支持挂载；签名与 dmg 需要 macOS）

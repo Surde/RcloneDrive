@@ -83,7 +83,7 @@ func (s *MountService) autoConnect() {
 		if !remote.AutoConnect || s.mounts.IsMounted(remote.Name) {
 			continue
 		}
-		if err := s.Mount(remote.Name); err != nil {
+		if err := s.MountQuiet(remote.Name); err != nil {
 			notifyUser("error", "自动连接失败", fmt.Sprintf("「%s」：%v", remote.Name, err))
 		}
 	}
@@ -94,9 +94,19 @@ func (s *MountService) Stop() {
 	s.mounts.UnmountAll()
 }
 
-// Mount 挂载指定远程存储；未设置挂载点时自动选择默认盘符/目录。
-// Windows 上挂载前确保 WinFsp 可用（未安装时内嵌安装包静默安装）。
+// Mount 挂载指定远程存储（用户手动触发：界面/托盘）；连接成功且驱动器
+// 勾选「连接时自动打开」时自动打开挂载文件夹。
+// 未设置挂载点时自动选择默认盘符/目录。Windows 上挂载前确保 WinFsp 可用。
 func (s *MountService) Mount(name string) error {
+	return s.mount(name, true)
+}
+
+// MountQuiet 同 Mount，但不触发「连接时自动打开」（开机自动连接等后台场景用）。
+func (s *MountService) MountQuiet(name string) error {
+	return s.mount(name, false)
+}
+
+func (s *MountService) mount(name string, allowAutoOpen bool) error {
 	remote, ok := s.remotes.Get(name)
 	if !ok {
 		return fmt.Errorf("远程存储不存在: %s", name)
@@ -113,7 +123,15 @@ func (s *MountService) Mount(name string) error {
 			return fmt.Errorf("没有可用的挂载盘符")
 		}
 	}
-	return s.mounts.Mount(name, target, remote.ReadOnly, remote.Insecure)
+	if err := s.mounts.Mount(name, target, remote.ReadOnly, remote.Insecure); err != nil {
+		return err
+	}
+	if allowAutoOpen && remote.AutoOpen {
+		if err := openDirectory(target); err != nil {
+			notifyUser("error", "自动打开文件夹失败", fmt.Sprintf("「%s」：%v", name, err))
+		}
+	}
+	return nil
 }
 
 // Unmount 卸载指定远程存储。

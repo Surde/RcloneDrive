@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -252,8 +253,11 @@ func (s *mainViewState) driveCard(c *ui.Context, t *ui.Theme, remote Remote, sna
 	ui.Row(c).FillWidth().Gap(10).Padding(10, 12).Radius(t.Radius).AlignItems(ui.Center).
 		Border(1, t.Border).
 		Children(func() {
-			// 协议图标（圆形底，对应旧 bg-muted rounded-full）
-			ui.Box(c).Size(34, 34).Radius(17).Background(t.Surface).AlignItems(ui.Center).Children(func() {
+			// 协议图标（圆形底，对应旧 bg-muted rounded-full）。
+			// 用 Row 而非 Box：Box 的 Justify 默认 Start，图标只水平居中、
+			// 垂直贴顶；Row 双轴居中才是正的。
+			ui.Row(c).Size(34, 34).Radius(17).Background(t.Surface).
+				Justify(ui.Center).AlignItems(ui.Center).Shrink(0).Children(func() {
 				ui.Icon(c, protocolIcon(remote.Type)).Size(15, 15).TextColor(t.TextMuted)
 			})
 
@@ -261,7 +265,12 @@ func (s *mainViewState) driveCard(c *ui.Context, t *ui.Theme, remote Remote, sna
 				// 第 1 行：盘符 + 名称 + 协议
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 					if remote.MountPoint != "" {
-						ui.Badge(c, remote.MountPoint)
+						// 盘符小徽章：字号比名称小一档，灰底描边（Badge 字号偏大且不可调）。
+						// 展示去掉冒号（Z: → Z），存储仍保留冒号供 rclone 使用。
+						ui.Row(c).Padding(1, 6).Radius(t.Radius).Background(t.Surface).
+							Border(1, t.Border).Shrink(0).Children(func() {
+							ui.Text(c, strings.TrimSuffix(remote.MountPoint, ":")).FontSize(t.FontSize - 2).Bold()
+						})
 					}
 					ui.Text(c, remote.Name).Bold().MaxLines(1).Shrink(1)
 					label := snap.labels[remote.Type]

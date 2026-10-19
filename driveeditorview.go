@@ -39,6 +39,7 @@ type driveEditorState struct {
 	autoConnect bool
 	readOnly    bool
 	insecure    bool
+	autoOpen    bool // 连接成功后自动打开挂载文件夹
 	options     map[string]string
 	invalid     map[string]bool
 	tab         int
@@ -247,7 +248,7 @@ func (s *driveEditorState) seedOptions(keepExisting bool) {
 func (s *driveEditorState) resetForm() {
 	s.name = ""
 	s.mountPoint = s.defaultMountPoint
-	s.autoConnect, s.readOnly, s.insecure = false, false, false
+	s.autoConnect, s.readOnly, s.insecure, s.autoOpen = false, false, false, false
 	s.invalid = make(map[string]bool)
 	s.seedOptions(false)
 	// 默认盘符可能被其他驱动器占用，落到第一个可用项
@@ -270,6 +271,7 @@ func (s *driveEditorState) fillFrom(remote Remote) {
 	s.autoConnect = remote.AutoConnect
 	s.readOnly = remote.ReadOnly
 	s.insecure = remote.Insecure
+	s.autoOpen = remote.AutoOpen
 	s.invalid = make(map[string]bool)
 	s.seedOptions(false)
 	// 凭据不落 remotes.json：配置项从 rclone.conf 回读（密码字段后端已解密）
@@ -358,7 +360,9 @@ func (s *driveEditorState) typeItem(c *ui.Context, t *ui.Theme, item rclone.Back
 // --- 右侧：表单面板 ---
 
 func (s *driveEditorState) editorPanel(c *ui.Context, t *ui.Theme) {
-	ui.Column(c).FillWidth().Grow(1).Children(func() {
+	// FillHeight 是必须的：主布局 Row 靠顶对齐后子元素不再被纵向拉伸，
+	// 不显式填满行高时 Scroll 拿不到有界高度，内容超长会溢出窗口而非滚动。
+	ui.Column(c).FillWidth().FillHeight().Grow(1).Children(func() {
 		// 当前类型标题行
 		ui.Row(c).FillWidth().Gap(8).Padding(10, 12).AlignItems(ui.Center).
 			BorderWidth(0, 0, 1, 0).BorderColor(t.Border).Children(func() {
@@ -472,7 +476,12 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 				if len(letters) > 0 {
 					// Select 自带 140px 最小宽度（t.Space(35)），会溢出
 					// 本列并与右侧下拉重叠，这里清零后填满 90px 列宽。
-					ui.Select(c, &s.mountPoint, letters).MinWidth(0).FillWidth()
+					// 标签展示去掉冒号（Z: → Z），写回的值保留冒号（rclone 需要）。
+					labels := make([]string, len(letters))
+					for i, l := range letters {
+						labels[i] = strings.TrimSuffix(l, ":")
+					}
+					selectLabeled(c, t, &s.mountPoint, labels, letters, "")
 				} else {
 					// 非 Windows 没有盘符概念：显示挂载目录（只读）
 					ui.TextInput(c, &s.mountPoint).ReadOnly(true)
@@ -492,11 +501,12 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 			}
 		})
 
-		// 开关组：自动连接 / 只读模式 / 忽略证书错误
+		// 开关组：自动连接 / 只读模式 / 忽略证书错误 / 连接时自动打开
 		ui.Row(c).Gap(16).AlignItems(ui.Center).Wrap().Children(func() {
 			ui.Checkbox(c, &s.autoConnect, "自动连接")
 			ui.Checkbox(c, &s.readOnly, "只读模式")
 			ui.Checkbox(c, &s.insecure, "忽略证书错误").Tooltip("自签名证书的 HTTPS 服务器无法校验证书时勾选。注意：开启后该驱动器的流量不再受 TLS 保护，存在被窃听、篡改的风险")
+			ui.Checkbox(c, &s.autoOpen, "连接时自动打开").Tooltip("手动连接成功后自动打开挂载的文件夹；开机自动连接不触发")
 		})
 
 		if s.insecure {
@@ -772,6 +782,7 @@ func (s *driveEditorState) buildRemote() Remote {
 		AutoConnect: s.autoConnect,
 		ReadOnly:    s.readOnly,
 		Insecure:    s.insecure,
+		AutoOpen:    s.autoOpen,
 		Options:     opts,
 	}
 }

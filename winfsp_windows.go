@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,11 +31,34 @@ const winfspMSIName = "winfsp-2.1.25156.msi"
 // winfspInstallMu 串行化安装过程，避免并发挂载触发多次 UAC。
 var winfspInstallMu sync.Mutex
 
-// winfspInstalled 报告 WinFsp 驱动服务是否已注册（安装即注册服务，
-// 驱动按需启动，无需等待服务进入运行状态）。
+// winfspInstalled 报告 WinFsp 驱动服务是否已注册。
+// WinFsp 2.x 的驱动服务名带构建时间戳后缀（如 WinFsp+20261019T075328Z），
+// 不能查固定名 WinFsp；这里枚举服务项按前缀匹配（同时兼容 1.x 的 WinFsp）。
 func winfspInstalled() bool {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE,
-		`SYSTEM\CurrentControlSet\Services\WinFsp`, registry.READ)
+		`SYSTEM\CurrentControlSet\Services`, registry.READ)
+	if err != nil {
+		return false
+	}
+	defer k.Close()
+	names, err := k.ReadSubKeyNames(-1)
+	if err != nil {
+		return false
+	}
+	for _, name := range names {
+		if strings.HasPrefix(name, "WinFsp") {
+			return true
+		}
+	}
+	return false
+}
+
+// appInstalledBySetup 报告应用是否由 NSIS 安装器安装（HKLM 卸载注册项存在）。
+// 安装版在运行时不再尝试内嵌安装 WinFsp：组件缺失说明安装被破坏，
+// 提示重装；便携版（无卸载注册项）才走内嵌静默安装兜底。
+func appInstalledBySetup() bool {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE,
+		`Software\Microsoft\Windows\CurrentVersion\Uninstall\com.younland.rclonedrive`, registry.READ)
 	if err != nil {
 		return false
 	}
@@ -43,8 +67,9 @@ func winfspInstalled() bool {
 }
 
 // ensureWinFsp 挂载前确保 WinFsp 可用：已安装则直接返回；未安装时
-// 提示用户后提取内嵌 MSI，经 UAC 提权静默安装并等待注册完成。
-// 用户取消 UAC 或安装失败时返回错误，挂载中止。
+// 便携版提示用户后提取内嵌 MSI，经 UAC 提权静默安装并等待注册完成；
+// 安装版不自动装，返回错误提示修复安装。用户取消 UAC 或安装失败时
+// 返回错误，挂载中止。
 func ensureWinFsp() error {
 	if winfspInstalled() {
 		return nil
@@ -53,6 +78,11 @@ func ensureWinFsp() error {
 	defer winfspInstallMu.Unlock()
 	if winfspInstalled() {
 		return nil
+	}
+
+	if appInstalledBySetup() {
+		return fmt.Errorf("缺少 WinFsp 文件系统组件（安装时未完成或被卸载），" +
+			"请重新运行安装程序修复后再挂载")
 	}
 
 	notifyUserTo("main", "info", "需要安装 WinFsp",

@@ -63,23 +63,35 @@ Section "RcloneDrive" SEC_APP
 SectionEnd
 
 Section "WinFsp（未安装时才执行）" SEC_WINFSP
-  ; 已安装（驱动服务已注册）则跳过
-  ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Services\WinFsp" "ImagePath"
-  StrCmp $0 "" do_install
-    DetailPrint "WinFsp 已安装，跳过"
-    Goto done
-  do_install:
-    SetOutPath $PLUGINSDIR
-    File /oname=winfsp.msi "${WINFSP_MSI}"
-    DetailPrint "正在静默安装 WinFsp…"
-    ExecWait 'msiexec /i "$PLUGINSDIR\winfsp.msi" /qn /norestart' $1
-    IntCmp $1 0 done
-    IntCmp $1 3010 need_reboot
-      MessageBox MB_OK|MB_ICONEXCLAMATION "WinFsp 安装失败（msiexec 退出码 $1）。挂载云盘需要 WinFsp，可稍后重试或在首次挂载时由应用自动安装。" /SD IDOK
-      Goto done
-    need_reboot:
-      SetRebootFlag true
-  done:
+  ; 已安装（驱动服务已注册）则跳过。WinFsp 2.x 驱动服务名带时间戳后缀
+  ; （WinFsp+2026...），不能查固定键名，枚举服务项按前缀匹配（兼容 1.x）。
+  StrCpy $2 0
+check_svc:
+  EnumRegKey $1 HKLM "SYSTEM\CurrentControlSet\Services" $2
+  StrCmp $1 "" check_file
+  StrCpy $3 $1 6
+  StrCmp $3 "WinFsp" skip_install
+  IntOp $2 $2 + 1
+  Goto check_svc
+check_file:
+  ; 兜底：按默认安装位置查驱动 DLL（服务名未来再变也能识别）
+  IfFileExists "$PROGRAMFILES\WinFsp\bin\winfsp-x64.dll" skip_install
+  Goto do_install
+skip_install:
+  DetailPrint "WinFsp 已安装，跳过"
+  Goto winfsp_done
+do_install:
+  SetOutPath $PLUGINSDIR
+  File /oname=winfsp.msi "${WINFSP_MSI}"
+  DetailPrint "正在静默安装 WinFsp…"
+  ExecWait 'msiexec /i "$PLUGINSDIR\winfsp.msi" /qn /norestart' $1
+  IntCmp $1 0 winfsp_done
+  IntCmp $1 3010 need_reboot
+    MessageBox MB_OK|MB_ICONEXCLAMATION "WinFsp 安装失败（msiexec 退出码 $1）。挂载云盘需要 WinFsp，可稍后重试。" /SD IDOK
+    Goto winfsp_done
+  need_reboot:
+    SetRebootFlag true
+winfsp_done:
 SectionEnd
 
 Function CreateDesktopShortcut

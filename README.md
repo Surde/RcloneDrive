@@ -29,7 +29,8 @@ task sync:version APP_VERSION=x.y.z   # 改版本号
 - **setup 安装时**：安装包为管理员级 NSIS（`build/windows/installer.nsi`），
   安装应用文件的同时静默安装 WinFsp（如系统未安装），全程一次 UAC；
 - **便携版/免安装场景**：首次点击「连接」时若检测到未安装，应用会提取
-  内嵌 MSI 并经 UAC 静默安装。
+  内嵌 MSI 并经 UAC 静默安装；安装版（NSIS 安装）则不自动装——组件缺失
+  说明安装被破坏，提示重新运行安装程序修复。
 
 ## 第三方组件
 

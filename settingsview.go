@@ -46,8 +46,9 @@ func (s *settingsViewState) view(c *ui.Context) {
 				s.navItem(c, t, "update", "更新", iconUpdate)
 			})
 
-			// 右侧内容
-			ui.Scroll(c).FillWidth().Grow(1).Children(func() {
+			// 右侧内容（FillHeight 限定视口高度，内容超长时滚动；
+			// 见 driveeditorview.editorPanel 的注释）
+			ui.Scroll(c).FillWidth().FillHeight().Grow(1).Children(func() {
 				ui.Column(c).FillWidth().Padding(14).Gap(14).Children(func() {
 					switch s.section {
 					case "startup":

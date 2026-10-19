@@ -63,11 +63,11 @@
 
 #### 已沉淀经验
 
-- **标题**：ui.Row 默认把子元素垂直居中，内容不足满高时会被"居中"到窗口中部
+- **标题**：`ui.Row` 默认把子元素垂直居中，内容不足满高时会被"居中"到窗口中部
   - **触发信号**：窗口上部大片空白、内容出现在视觉中心（设置窗口内容少时最明显）。
   - **根因/约束**：`ui.Row` 的跨轴对齐默认 Center（"lays its children out from left to right, centered vertically"），侧栏 FillHeight 不受影响，右侧内容区（Scroll/Column）只等于内容高度。
-  - **正确做法**：主布局 Row 显式 `.AlignItems(ui.Start)`。
-  - **验证方式**：渲染内容少的窗口视图确认内容靠顶。
+  - **正确做法**：主布局 Row 显式 `.AlignItems(ui.Start)`，且**内容区再显式 `.FillHeight()`**——只靠 AlignItems(Start) 时 Scroll 拿不到有界高度，内容超长会溢出窗口而不是滚动。
+  - **验证方式**：内容少的窗口靠顶、内容多的窗口出现滚动条且底部按钮不被覆盖。
   - **适用范围**：所有「侧栏 + 内容区」的窗口布局（settingsview/driveeditorview）。
 - **标题**：`ui.Select` 触发器有 140px 主题最小宽度（t.Space(35)），在固定宽列内会溢出并与相邻控件重叠
   - **触发信号**：两个下拉框画成一个长框、边框/箭头叠在一起。

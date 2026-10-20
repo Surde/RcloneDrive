@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,7 +93,7 @@ func (s *driveEditorState) view(c *ui.Context) {
 		title, subtitle = "编辑驱动器", "修改远程存储的连接信息"
 	}
 
-	ui.Column(c).Fill().Children(func() {
+	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		windowBar(c, t, title, subtitle, nil, func() {
 			if allWindows != nil {
 				allWindows.hide(driveWindowName)
@@ -468,10 +469,19 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 		// 名称
 		s.nameField(c, t)
 
-		// 盘符（+ webdav 服务商）
+		// 盘符（Windows）/ 挂载目录（其他平台）
 		ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
-			ui.Column(c).Gap(4).Width(90).Children(func() {
-				ui.Text(c, "盘符").FontSize(t.FontSize - 1).TextColor(t.TextMuted)
+			mountCol := ui.Column(c).Gap(4).Width(90)
+			if runtime.GOOS != "windows" {
+				// 非 Windows 填的是目录路径，给整行宽度
+				mountCol = ui.Column(c).Gap(4).Grow(1)
+			}
+			mountCol.Children(func() {
+				label := "盘符"
+				if runtime.GOOS != "windows" {
+					label = "挂载目录"
+				}
+				ui.Text(c, label).FontSize(t.FontSize - 1).TextColor(t.TextMuted)
 				letters := s.driveLetters()
 				if len(letters) > 0 {
 					// Select 自带 140px 最小宽度（t.Space(35)），会溢出
@@ -483,8 +493,8 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 					}
 					selectLabeled(c, t, &s.mountPoint, labels, letters, "")
 				} else {
-					// 非 Windows 没有盘符概念：显示挂载目录（只读）
-					ui.TextInput(c, &s.mountPoint).ReadOnly(true)
+					// 非 Windows：挂载目录可编辑（默认 <配置目录>/mounts）
+					ui.TextInput(c, &s.mountPoint).Placeholder("挂载目录路径")
 				}
 			})
 			if s.selectedType == "webdav" {

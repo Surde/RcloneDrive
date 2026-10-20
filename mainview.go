@@ -1,6 +1,7 @@
 package main
 
 import (
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -46,7 +47,7 @@ func (s *mainViewState) view(c *ui.Context) {
 
 	snapshot := s.snapshot()
 
-	ui.Column(c).Fill().Children(func() {
+	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		windowBar(c, t, "RcloneDrive", "", func() {
 			iconButton(c, t, "添加驱动器", iconPlus, func() {
 				if allWindows != nil {
@@ -153,10 +154,21 @@ func (s *mainViewState) rcloneAlert(c *ui.Context, t *ui.Theme) {
 		ui.Icon(c, iconWarning).Size(14, 14).TextColor(t.Warning)
 		ui.Column(c).Gap(2).Children(func() {
 			ui.Text(c, "当前构建未启用挂载功能").Bold()
-			ui.Text(c, "挂载依赖内嵌 rclone 引擎的 cmount 实现，需要以 cmount 构建标签编译，并在系统中安装 WinFsp（macOS 为 macFUSE，Linux 为 fuse3）。").
-				FontSize(t.FontSize - 2).TextColor(t.TextMuted)
+			ui.Text(c, rcloneAlertHelp()).FontSize(t.FontSize - 2).TextColor(t.TextMuted)
 		})
 	})
+}
+
+// rcloneAlertHelp 返回平台相关的挂载启用提示（只提当前平台的要求）。
+func rcloneAlertHelp() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "挂载依赖内嵌 rclone 引擎的 cmount 实现，需要以 cmount 构建标签编译；Windows 上还需安装 WinFsp（安装包已内嵌，首次挂载会自动安装）。"
+	case "darwin":
+		return "挂载依赖内嵌 rclone 引擎的 cmount 实现，需要以 cmount 构建标签编译，并在系统中安装 macFUSE。"
+	default:
+		return "挂载依赖内嵌 rclone 引擎的 cmount 实现，需要以 cmount 构建标签编译（启用 cgo），并在系统中安装 fuse3。"
+	}
 }
 
 // updateBanner 是更新提示条（检查中/下载中/就绪）。旧前端没有主窗口横幅
@@ -239,6 +251,11 @@ func (s *mainViewState) emptyState(c *ui.Context, t *ui.Theme) {
 	})
 }
 
+// isDriveLetter 报告挂载点是否是 Windows 盘符形式（如 "Z:"）。
+func isDriveLetter(s string) bool {
+	return len(s) == 2 && s[1] == ':' && s[0] >= 'A' && s[0] <= 'Z'
+}
+
 // driveCard 对应旧前端 DriveCard.vue：协议图标、盘符、名称、类型、
 // 状态、容量用量条、实时速率、操作按钮（打开文件夹/挂载/编辑/删除）。
 func (s *mainViewState) driveCard(c *ui.Context, t *ui.Theme, remote Remote, snap mainSnapshot) {
@@ -264,8 +281,10 @@ func (s *mainViewState) driveCard(c *ui.Context, t *ui.Theme, remote Remote, sna
 			ui.Column(c).Gap(4).Grow(1).Shrink(1).Children(func() {
 				// 第 1 行：盘符 + 名称 + 协议
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					if remote.MountPoint != "" {
-						// 盘符小徽章：字号比名称小一档，灰底描边（Badge 字号偏大且不可调）。
+					// 盘符徽章只展示 Windows 盘符；Linux/macOS 的挂载目录路径
+					// 太长不适合徽章，省略。
+					if isDriveLetter(remote.MountPoint) {
+						// 字号比名称小一档，灰底描边（Badge 字号偏大且不可调）。
 						// 展示去掉冒号（Z: → Z），存储仍保留冒号供 rclone 使用。
 						ui.Row(c).Padding(1, 6).Radius(t.Radius).Background(t.Surface).
 							Border(1, t.Border).Shrink(0).Children(func() {

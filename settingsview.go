@@ -28,7 +28,7 @@ func (s *settingsViewState) view(c *ui.Context) {
 	}
 	s.ensureAutoStartLoaded()
 
-	ui.Column(c).Fill().Children(func() {
+	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		windowBar(c, t, "设置", "调整界面外观与启动方式", nil, func() {
 			if allWindows != nil {
 				allWindows.hide(settingsWindowName)

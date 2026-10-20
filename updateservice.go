@@ -1008,7 +1008,7 @@ func (s *UpdateService) Restart() error {
 		if err := installAfterExit(staged); err != nil {
 			return err
 		}
-		mygo.App.Quit()
+		quitForUpdate()
 		return nil
 	}
 	if downloaded == "" {
@@ -1020,8 +1020,28 @@ func (s *UpdateService) Restart() error {
 	if err := applyUpdate(downloaded); err != nil {
 		return err
 	}
+	// Relaunch 若经窗口关闭流程同样会被 OnClose 拦截，先放行
+	if allWindows != nil {
+		allWindows.quitting.Store(true)
+	}
 	mygo.App.Relaunch()
 	return nil
+}
+
+// quitForUpdate 是更新生效前的真正退出。不能裸调 App.Quit：各窗口的
+// OnClose 把关闭拦截成「隐藏到托盘」（quitting 未置位时 PreventDefault），
+// 退出会中止，installAfterExit 的安装助手等不到进程退出（120s 超时后
+// 强行装也会被运行中的 exe 文件锁挡住），表现为「下载完成但重启没生效」。
+// 与托盘「退出」同路径：先卸载全部挂载，再置 quitting 放行拦截，最后 Quit。
+func quitForUpdate() {
+	if mountService != nil {
+		mountService.Stop()
+	}
+	if allWindows != nil {
+		allWindows.quit()
+		return
+	}
+	mygo.App.Quit()
 }
 
 // applyUpdate 便携版就地替换：把已下载（解压）的文件换到当前可执行文件的位置。

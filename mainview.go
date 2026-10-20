@@ -342,13 +342,17 @@ func (s *mainViewState) driveCard(c *ui.Context, t *ui.Theme, remote Remote, sna
 			if mounted {
 				toggleIcon, tooltip = iconUnplug, "断开"
 			}
+			failTitle := "挂载失败"
+			if mounted {
+				failTitle = "断开失败"
+			}
 			iconButton(c, t, tooltip, toggleIcon, func() {
 				s.runAction(name, func() error {
 					if mounted {
 						return mountService.Unmount(name)
 					}
 					return mountService.Mount(name)
-				}, "")
+				}, failTitle)
 			})
 			editTooltip := "编辑"
 			if mounted {

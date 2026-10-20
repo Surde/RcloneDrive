@@ -64,7 +64,7 @@ func main() {
 			DisableResize:   true,
 			Frameless:       true,
 			Hidden:          startHidden,
-			BackgroundColor: "#06070f",
+			BackgroundColor: initialChrome(),
 			StateKey:        "main",
 			Content:         ui.View(mainWindowView.view),
 		})

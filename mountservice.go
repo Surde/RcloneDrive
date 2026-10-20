@@ -96,7 +96,7 @@ func (s *MountService) Stop() {
 
 // Mount 挂载指定远程存储（用户手动触发：界面/托盘）；连接成功且驱动器
 // 勾选「连接时自动打开」时自动打开挂载文件夹。
-// 未设置挂载点时自动选择默认盘符/目录。Windows 上挂载前确保 WinFsp 可用。
+// 未设置挂载点时自动选择默认盘符（Windows）/ 独立子目录（Linux/macOS）。
 func (s *MountService) Mount(name string) error {
 	return s.mount(name, true)
 }
@@ -126,9 +126,11 @@ func (s *MountService) mount(name string, allowAutoOpen bool) error {
 	}
 	target := remote.MountPoint
 	if target == "" {
-		target = nextFreeMountPoint()
+		// 留空时按平台分配默认挂载点（Windows 空闲盘符；Linux/macOS 为
+		// mounts/<驱动器名> 子目录，各驱动器互不冲突）
+		target = defaultMountTarget(remote.Name)
 		if target == "" {
-			return fmt.Errorf("没有可用的挂载盘符")
+			return fmt.Errorf("没有可用的挂载点")
 		}
 	}
 	if err := s.mounts.Mount(name, target, remote.ReadOnly, remote.Insecure); err != nil {

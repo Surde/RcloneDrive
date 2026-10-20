@@ -251,10 +251,11 @@ jobs:
             out="dist/RcloneDrive-${APP_VERSION}-linux-${{ matrix.arch }}.deb"
             # mygo 的 deb 模板硬编码了 libgtk-3-0 与 libwebkit2gtk（webview
             # 应用的依赖），native UI 两者都不需要；同时把运行挂载所需的
-            # fuse3 写进 Depends（apt 随包装好）。重写 control 后再打包。
+            # fuse3 写进 Depends（apt 随包装好）。注意 fusermount3 在 fuse3
+            # 包里而不在 libfuse3-3（只有共享库），两者都要。重写 control 后再打包。
             tmp="$(mktemp -d)"
             dpkg-deb -R "$f" "$tmp"
-            sed -i -E 's/^Depends:.*/Depends: libfuse3-3 | libfuse3t64/' "$tmp/DEBIAN/control"
+            sed -i -E 's/^Depends:.*/Depends: fuse3, libfuse3-3 | libfuse3t64/' "$tmp/DEBIAN/control"
             dpkg-deb -b "$tmp" "$out"
             rm -rf "$tmp"
           done

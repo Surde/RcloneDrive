@@ -18,6 +18,12 @@ func nextFreeMountPoint() string {
 	return ""
 }
 
+// defaultMountTarget 返回驱动器的默认挂载点（Windows：第一个空闲盘符）。
+// 盘符与驱动器名无关，name 仅为与其他平台同名函数保持签名一致。
+func defaultMountTarget(_ string) string {
+	return nextFreeMountPoint()
+}
+
 // usedDriveLetters 返回当前已被占用的盘符（如 "C:"、"Y:"），供界面过滤下拉选项。
 func usedDriveLetters() []string {
 	drives, err := windows.GetLogicalDrives()

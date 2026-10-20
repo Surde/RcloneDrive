@@ -14,6 +14,9 @@ import (
 // applyAppearance 按用户的外观设置决定本帧使用的主题，并应用到 Context。
 // 「跟随系统」保留 Context 的默认主题（mygo 随系统深浅色）；「深色」用
 // 旧前端的 #06070f 背景色，「浅色」用 ui 的浅色主题。
+// 每个窗口每帧都会走到这里，resolvedTheme 据此把主题底色同步给系统窗口
+// （见 syncChrome）：Linux 上 Frameless 窗口的默认表面是透明的，不设窗口
+// 底色会透出桌面/其他窗口的内容（曾出现别的应用文字透进窗口的异常）。
 func applyAppearance(c *ui.Context) *ui.Theme {
 	mode := "system"
 	if settingsService != nil {
@@ -27,7 +30,48 @@ func applyAppearance(c *ui.Context) *ui.Theme {
 	case "light":
 		c.SetTheme(ui.LightTheme())
 	}
-	return c.Theme()
+	t := c.Theme()
+	syncChrome(themeHex(t.Background))
+	return t
+}
+
+// syncChrome 把当前主题底色同步到所有系统窗口的底色（变化时才下发）。
+// 窗口底色是帧内容铺不满/首帧未绘制时的兜底：透明表面在 Linux 上会透出
+// 桌面内容，外观上与「文字显示异常」混在一起难以排查。
+func syncChrome(hex string) {
+	resolvedTheme.Lock()
+	changed := resolvedTheme.hex != hex
+	resolvedTheme.hex = hex
+	resolvedTheme.Unlock()
+	if changed && allWindows != nil {
+		allWindows.syncChrome(hex)
+	}
+}
+
+// resolvedTheme 记录最近一次渲染帧解析出的主题底色（含「跟随系统」解析结果）。
+var resolvedTheme struct {
+	sync.Mutex
+	hex string
+}
+
+// themeHex 把 ui.Color 转成 #rrggbb 形式（窗口底色参数用）。
+func themeHex(c ui.Color) string {
+	return fmt.Sprintf("#%02x%02x%02x", c.R, c.G, c.B)
+}
+
+// initialChrome 返回创建窗口时的底色初值：跟随系统时交给运行时（留空），
+// 首帧渲染后经 syncChrome 校正为解析后的主题底色。
+func initialChrome() string {
+	if settingsService == nil {
+		return ""
+	}
+	switch settingsService.ThemeMode() {
+	case "dark":
+		return "#06070f"
+	case "light":
+		return "#ffffff"
+	}
+	return ""
 }
 
 // windowBar 是三个窗口共用的自绘标题栏（对应旧 components/WindowBar.vue +

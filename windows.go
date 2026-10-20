@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"sync"
 	"sync/atomic"
 
@@ -155,7 +156,10 @@ func (s *windowManager) create(name string, width, height int, content *ui.Conte
 		Height:        height,
 		DisableResize: true,
 		Frameless:     true,
-		Content:       content,
+		// 底色兜底：Linux 上 Frameless 窗口默认表面透明，不设会透出桌面
+		// 内容；首帧后经 syncChrome 校正为解析出的主题底色
+		BackgroundColor: initialChrome(),
+		Content:         content,
 	})
 	// 关闭只隐藏：窗口与其状态保持存活，下次打开直接复用（见 reuse）。
 	// 新增驱动器窗口关闭后（取消或保存）把主界面带到前台。
@@ -193,5 +197,24 @@ func (s *windowManager) invalidateAll() {
 	s.mu.Unlock()
 	for _, w := range windows {
 		w.Invalidate()
+	}
+}
+
+// syncChrome 把主题底色应用到所有窗口的系统底色（SetBackgroundColor 是
+// 线程安全的窗口操作，失败仅记日志——底色只是兜底，不影响帧内容）。
+func (s *windowManager) syncChrome(hex string) {
+	s.mu.Lock()
+	windows := make([]*mygo.Window, 0, len(s.windows)+1)
+	for _, w := range s.windows {
+		windows = append(windows, w)
+	}
+	if s.main != nil {
+		windows = append(windows, s.main)
+	}
+	s.mu.Unlock()
+	for _, w := range windows {
+		if err := w.SetBackgroundColor(hex); err != nil {
+			log.Printf("同步窗口底色失败: %v", err)
+		}
 	}
 }

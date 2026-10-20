@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -493,8 +494,14 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 					}
 					selectLabeled(c, t, &s.mountPoint, labels, letters, "")
 				} else {
-					// 非 Windows：挂载目录可编辑（默认 <配置目录>/mounts）
-					ui.TextInput(c, &s.mountPoint).Placeholder("挂载目录路径")
+					// 非 Windows：挂载目录由应用按驱动器名分配（mounts/<名称>），
+					// 只读展示生效路径，不允许编辑（盘符是 Windows 的概念）
+					ui.Row(c).Gap(8).AlignItems(ui.Center).FillWidth().
+						Padding(6, 8).Radius(t.Radius).Background(t.Surface).Border(1, t.Border).
+						Children(func() {
+							ui.Text(c, s.effectiveMountDir()).FontSize(t.FontSize - 1).
+								TextColor(t.TextMuted).MaxLines(1)
+						})
 				}
 			})
 			if s.selectedType == "webdav" {
@@ -785,10 +792,16 @@ func (s *driveEditorState) buildRemote() Remote {
 			opts[key] = value
 		}
 	}
+	mountPoint := s.mountPoint
+	if runtime.GOOS != "windows" && mountPoint == s.defaultMountPoint {
+		// 用户没改默认挂载目录：留空存储，连接时按驱动器名分配
+		// mounts/<名称> 子目录，避免多个驱动器挤在 mounts 根目录冲突
+		mountPoint = ""
+	}
 	return Remote{
 		Name:        strings.TrimSpace(s.name),
 		Type:        s.selectedType,
-		MountPoint:  s.mountPoint,
+		MountPoint:  mountPoint,
 		AutoConnect: s.autoConnect,
 		ReadOnly:    s.readOnly,
 		Insecure:    s.insecure,
@@ -888,8 +901,25 @@ func (s *driveEditorState) onDelete() {
 
 // --- 盘符与 webdav 组合行的辅助（对应旧 computed/工具函数） ---
 
+// effectiveMountDir 返回非 Windows 平台展示给用户看的生效挂载目录：
+// 自定义过（不等于默认根目录）就显示自定义值；否则按当前名称预演默认
+// 子目录，名称为空时显示占位提示。
+func (s *driveEditorState) effectiveMountDir() string {
+	if s.mountPoint != "" && s.mountPoint != s.defaultMountPoint {
+		return s.mountPoint
+	}
+	if name := mountNameDir(strings.TrimSpace(s.name)); name != "drive" {
+		return defaultMountTarget(name)
+	}
+	return filepath.Join(nextFreeMountPoint(), "<驱动器名>")
+}
+
 // driveLetters 从 Z 往下排除系统已占用、以及分配给其他驱动器的盘符。
+// 非 Windows 平台没有盘符概念，返回空——挂载目录是文本输入，不走下拉。
 func (s *driveEditorState) driveLetters() []string {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
 	taken := make(map[string]bool)
 	for _, letter := range s.usedLetters {
 		taken[strings.ToUpper(letter)] = true

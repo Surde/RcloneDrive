@@ -58,12 +58,13 @@ NSIS 安装版走安装包静默接管，便携版就地替换二进制并重启
 |---|---|---|
 | Windows | `RcloneDrive Setup <版本> amd64.exe` | 管理员级安装器，安装时自动装 WinFsp；安装到 `Program Files`，支持自动更新 |
 | Windows | `RcloneDrive.exe`（便携版） | 单文件免安装，就地替换方式自动更新 |
-| macOS | `RcloneDrive.app` | 需从源码在 macOS 上构建（dmg/签名需要 macOS 环境） |
-| Linux | `rclonedrive_<版本>_amd64.deb` / `.tar.gz` | deb 包或解压即用（tar.gz 内附 `install.sh`） |
+| macOS | `RcloneDrive.app` | 需从源码在 macOS 上构建（dmg/签名需要 macOS 环境）；支持挂载（经 macFUSE，首次挂载引导安装） |
+| Linux | `rclone-drive_<版本>_amd64.deb` / `.tar.gz` | 支持挂载；deb 经 apt 自动安装 fuse3，tar.gz 需自行安装 fuse3 |
 
 > [!NOTE]
-> 仅 Windows 构建启用了 cmount 挂载（cgo + WinFsp）；macOS / Linux 产物
-> 当前不带挂载能力，界面会显示相应提示。
+> Windows、Linux、macOS 发布包均启用了挂载（Windows 为 cmount + WinFsp，
+> Linux 为 cmount + FUSE3，macOS 为 cmount + macFUSE）。源码自行构建时不带
+> `-tags cmount` 则无挂载能力，界面会显示相应提示。
 
 ## 🚀 快速开始
 
@@ -158,17 +159,17 @@ workflow artifact 不创建 Release。日常推送/PR 跑 `.github/workflows/che
 > 安装包文件名必须保持 `RcloneDrive Setup <版本> amd64.exe` 的命名——
 > 更新器靠它区分安装版（走 NSIS 静默接管）与便携版（就地替换）。
 
-## 🧩 WinFsp 与挂载
+## 🧩 挂载的系统依赖
 
-| 场景 | 行为 |
-|---|---|
-| setup 安装应用 | 检测到未安装则静默安装 WinFsp（已安装跳过）；全程一次 UAC |
-| 便携版首次挂载 | 提取内嵌 MSI，UAC 确认后静默安装，随后继续挂载 |
-| 安装版运行时 | 不再自动安装；组件缺失时报错提示重新运行安装程序 |
-| 卸载应用 | 保留 WinFsp（系统组件，其他应用可能使用） |
+| 平台 | 依赖 | 安装方式 |
+|---|---|---|
+| Windows | [WinFsp](https://winfsp.dev/) 2.1 | 内嵌在应用里：setup 安装时静默装好（一次 UAC）；便携版首次挂载自动提取安装；卸载应用时保留 |
+| Linux | fuse3（fusermount3） | deb 包的 Depends 已声明，apt 随包自动安装；tar.gz 手动 `sudo apt install fuse3`（首次挂载时应用会检测并提示对应发行版的命令，不代装——需要 root） |
+| macOS | [macFUSE](https://macfuse.github.io/) 5.x | 首次挂载时应用下载官方 dmg（SHA-256 校验）并经 osascript 请求管理员权限安装；装好后需在 系统设置 → 隐私与安全性 允许系统扩展（苹果安全设计，一次性手动步骤），Apple 芯片可能需先在恢复模式允许降低安全性 |
 
-检测方式：枚举 `HKLM\SYSTEM\CurrentControlSet\Services` 按 `WinFsp` 前缀
-匹配（兼容 2.x 的 `WinFsp+时间戳` 服务名），默认路径 DLL 兜底。
+检测方式：Windows 枚举 `HKLM\SYSTEM\CurrentControlSet\Services` 按 `WinFsp`
+前缀匹配（兼容 2.x 的 `WinFsp+时间戳` 服务名）；Linux 检测 `fusermount3`
+是否在 PATH；macOS 检查 `/Library/Filesystems/macfuse.fs` 及系统扩展启用状态。
 
 ## 📜 开源协议
 

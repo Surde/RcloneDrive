@@ -115,6 +115,14 @@ func (s *MountService) mount(name string, allowAutoOpen bool) error {
 		if err := ensureWinFsp(); err != nil {
 			return err
 		}
+		// Linux 挂载经 FUSE3（fusermount3），缺失时提示安装命令（需 root，不代装）
+		if err := ensureFuse3(); err != nil {
+			return err
+		}
+		// macOS 挂载经 macFUSE：缺失时引导安装，安装后需一次性手动批准扩展
+		if err := ensureMacFUSE(); err != nil {
+			return err
+		}
 	}
 	target := remote.MountPoint
 	if target == "" {

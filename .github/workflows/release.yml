@@ -156,6 +156,9 @@ jobs:
     runs-on: macos-14
     env:
       APP_VERSION: ${{ needs.prepare.outputs.version }}
+      # 原生 runner 开启 cgo + cmount（brew 提供 macFUSE 头文件），macOS 发布包支持挂载
+      CGO_ENABLED: "1"
+      MAC_TAGS: "production,cmount"
     steps:
       - uses: actions/checkout@v4
 
@@ -170,6 +173,15 @@ jobs:
         with:
           version: ${{ env.TASK_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # cmount（cgofuse）编译期需要 macFUSE SDK 头文件；运行期 macFUSE 由
+      # 应用在首次挂载时引导安装（见 macfuse_darwin.go）
+      - name: 安装 macFUSE（SDK 头文件）
+        run: brew install --cask macfuse
+
+      # Spotlight 索引 DMG 挂载卷会把挂载点踢掉，打包前关掉（已知抖动）
+      - name: 关闭 Spotlight 索引
+        run: sudo mdutil -a -i off
 
       - name: 构建并打包（通用包 + dmg）
         run: task package:darwin
@@ -205,6 +217,9 @@ jobs:
             runner: ubuntu-24.04-arm
     env:
       APP_VERSION: ${{ needs.prepare.outputs.version }}
+      # 原生 runner 直接启用 cgo + cmount，Linux 发布包支持挂载
+      CGO_ENABLED: "1"
+      LINUX_TAGS: "production,cmount,fuse3"
     steps:
       - uses: actions/checkout@v4
 
@@ -220,19 +235,38 @@ jobs:
           version: ${{ env.TASK_VERSION }}
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # cmount（cgofuse）编译期需要 FUSE3 头文件；运行期依赖经 deb 的 Depends 自动安装
+      - name: 安装 FUSE3 开发头文件
+        run: sudo apt-get update && sudo apt-get install -y libfuse3-dev
+
       - name: 构建并打包
         run: task package:linux ARCH=${{ matrix.arch }}
 
-      - name: 收集产物
+      - name: 收集产物（剥离原生 UI 不需要的 GTK/WebKit 依赖）
         run: |
           set -euo pipefail
           shopt -s nullglob
           mkdir -p dist
           for f in build/linux-${{ matrix.arch }}/*.deb; do
-            cp "$f" "dist/RcloneDrive-${APP_VERSION}-linux-${{ matrix.arch }}.deb"
+            out="dist/RcloneDrive-${APP_VERSION}-linux-${{ matrix.arch }}.deb"
+            # mygo 的 deb 模板硬编码了 libgtk-3-0 与 libwebkit2gtk（webview
+            # 应用的依赖），native UI 两者都不需要；同时把运行挂载所需的
+            # fuse3 写进 Depends（apt 随包装好）。重写 control 后再打包。
+            tmp="$(mktemp -d)"
+            dpkg-deb -R "$f" "$tmp"
+            sed -i -E 's/^Depends:.*/Depends: libfuse3-3 | libfuse3t64/' "$tmp/DEBIAN/control"
+            dpkg-deb -b "$tmp" "$out"
+            rm -rf "$tmp"
           done
           for f in build/linux-${{ matrix.arch }}/*.tar.gz; do
-            cp "$f" "dist/RcloneDrive-${APP_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+            out="dist/RcloneDrive-${APP_VERSION}-linux-${{ matrix.arch }}.tar.gz"
+            # install.sh 会检查 WebKitGTK 并给出误导性警告，打包前 neutralize
+            tmp="$(mktemp -d)"
+            tar -xzf "$f" -C "$tmp"
+            find "$tmp" -name install.sh -exec \
+              sed -i -E 's/^\s*grep -qF -e libwebkit2gtk.*/\treturn 0/' {} \;
+            tar -czf "$out" -C "$tmp" .
+            rm -rf "$tmp"
           done
           ls -l dist
           test -n "$(ls -A dist)"

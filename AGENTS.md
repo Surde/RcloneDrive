@@ -63,6 +63,19 @@
 
 #### 已沉淀经验
 
+- **标题**：`ui.Select` 弹层平铺全部选项且不可滚动，选项多时（盘符 24 个）被窗口底边截断
+  - **触发信号**：下拉列表画到窗口外，选不到后面的项，也无法滚动。
+  - **根因/约束**：`coreSelect` 的弹层是无 Scroll 的普通 panel；选项一多必然溢出窗口。
+  - **正确做法**：用 `ui.SelectBase` 自建弹层，panel 内套 `ui.Scroll().MaxHeight(240)`；样式对齐 mygo `styleButton`/`stylePanel`（`t.Space(1.5)`/`t.Space(3.5)`/`Radius+2`/Shadow）。本仓库已封装在 `uihelpers.go selectLabeled`，新下拉一律走它。**绑定真实值指针**（`SelectBase(c, value)`），label 只作展示文本——绑定"每帧重算的局部变量"会与两帧写回机制冲突导致选择丢失。
+  - **验证方式**：`ui.Tester` 展开弹层断言首尾选项存在并点选写回（见 `TestDriveEditorView`）；视觉滚动效果需真实窗口核验。
+  - **适用范围**：所有选项可能较多的下拉（盘符、枚举示例、端口等）。
+- **标题**：headless 测试点击 `SelectBase` 的 item 选不中：三条铁律
+  - **触发信号**：`tt.Click(选项)` 无报错但绑定值未变（真实鼠标点击却正常）。
+  - **根因/约束**：① item 首次捕获指针会标记输入 consumed 并重建一帧，跳过 Move 的直接点击 Down/Up 分属两个构建 pass，`Clicked()` 判定失效——点击前先 `tt.Move` 到目标（官方 base_test 同款顺序）；② item 必须有 `.Label(...)`，仅 Children 文本时点击传导不可靠；③ `Find/HasText` 基于 labels 表，包含被 Scroll 裁剪区外的元素——点击视口外的项会穿透（真实滚动行为），测试只能点视口内可见项。
+  - **正确做法**：Move → Click → Frame → 断言绑定值；点选目标选弹层视口内靠前的项。
+  - **验证方式**：`TestDriveEditorView` 的盘符弹层用例。
+  - **适用范围**：所有 `SelectBase`/`ComboboxBase` 自建弹层的 headless 测试。
+
 - **标题**：`ui.Row` 默认把子元素垂直居中，内容不足满高时会被"居中"到窗口中部
   - **触发信号**：窗口上部大片空白、内容出现在视觉中心（设置窗口内容少时最明显）。
   - **根因/约束**：`ui.Row` 的跨轴对齐默认 Center（"lays its children out from left to right, centered vertically"），侧栏 FillHeight 不受影响，右侧内容区（Scroll/Column）只等于内容高度。

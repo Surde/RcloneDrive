@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"rclonedrive/internal/rclone"
@@ -58,6 +59,36 @@ func TestDriveEditorView(t *testing.T) {
 	for _, label := range []string{"测试连接", "取消", "保存", "保存并连接"} {
 		if !tt.HasText(label) {
 			t.Fatalf("texts %q do not contain footer button %q", tt.Texts(), label)
+		}
+	}
+
+	// 盘符下拉弹层：展开后全部盘符都构建在弹层里（限高滚动可滚到全部，
+	// 2026-10 修复弹层被窗口底边截断且无法滚动的问题）。默认盘符必然在
+	// 列表里，触发器按其标签可点。
+	letters := state.driveLetters()
+	if len(letters) >= 2 {
+		if err := tt.Click(strings.TrimSuffix(state.mountPoint, ":")); err != nil {
+			t.Fatalf("click 盘符下拉触发器: %v", err)
+		}
+		first := strings.TrimSuffix(letters[0], ":")
+		last := strings.TrimSuffix(letters[len(letters)-1], ":")
+		if !tt.HasText(first) || !tt.HasText(last) {
+			t.Fatalf("盘符弹层应包含首尾选项 %q/%q, texts %q", first, last, tt.Texts())
+		}
+		target := letters[1] // 视口内的第二项（首项是当前默认值；列表末尾在
+		// MaxHeight 裁剪区外，点击穿透属正常滚动行为，headless 无法模拟滚动）
+		if target != state.mountPoint {
+			// 先 Move 再 Click：item 首次捕获指针会标记输入 consumed 并
+			// 重建一帧，跳过 Move 的直接点击会因 Down/Up 分属两个构建
+			// pass 而选不中（真实鼠标移动不受影响，官方测试同款顺序）
+			if r, ok := tt.Find(strings.TrimSuffix(target, ":")); ok {
+				tt.Move(r.X+r.W/2, r.Y+r.H/2)
+			}
+			tt.Click(strings.TrimSuffix(target, ":")) // 选择后写回真实值（含冒号）
+			tt.Frame()
+			if state.mountPoint != target {
+				t.Fatalf("选择 %s 后 mountPoint = %q", target, state.mountPoint)
+			}
 		}
 	}
 

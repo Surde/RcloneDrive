@@ -199,24 +199,41 @@ func (s *RemoteService) Create(remote Remote) error {
 	return s.save()
 }
 
-// Update 校验并更新远程存储；已连接的驱动器需要先断开连接，避免连接中途改写配置。
-func (s *RemoteService) Update(remote Remote) error {
-	if err := s.validate(remote, false); err != nil {
+// Update 校验并更新远程存储，按 oldName 定位旧条目（改名场景 oldName 与
+// remote.Name 不同）。改名时以新名视角校验（不得与其他驱动器重名）；同名
+// 编辑沿用既有校验。已连接的驱动器需要先断开连接，避免连接中途改写配置。
+func (s *RemoteService) Update(oldName string, remote Remote) error {
+	renaming := remote.Name != oldName
+	if err := s.validate(remote, renaming); err != nil {
 		return err
 	}
-	if s.mounts.IsMounted(remote.Name) {
-		return fmt.Errorf("「%s」已连接，请先断开连接再编辑", remote.Name)
+	if s.mounts.IsMounted(oldName) {
+		return fmt.Errorf("「%s」已连接，请先断开连接再编辑", oldName)
+	}
+	s.mu.RLock()
+	idx := -1
+	for i := range s.remotes {
+		if s.remotes[i].Name == oldName {
+			idx = i
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if idx < 0 {
+		return fmt.Errorf("远程存储不存在: %s", oldName)
+	}
+	// 名称变化：先把 rclone 配置节迁移到新名（凭据混淆值原样），再写最新选项
+	// 与元数据；配置先行，元数据失败时用户可删除重建恢复（见 design D3）
+	if remote.Name != oldName {
+		if err := rclone.RenameRemote(oldName, remote.Name); err != nil {
+			return err
+		}
 	}
 	if err := s.writeConfigSection(remote); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	for i := range s.remotes {
-		if s.remotes[i].Name == remote.Name {
-			s.remotes[i] = remote
-			break
-		}
-	}
+	s.remotes[idx] = remote
 	s.mu.Unlock()
 	return s.save()
 }

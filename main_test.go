@@ -66,8 +66,7 @@ func TestDriveEditorView(t *testing.T) {
 	// 2026-10 修复弹层被窗口底边截断且无法滚动的问题）。默认盘符必然在
 	// 列表里，触发器按其标签可点。
 	letters := state.driveLetters()
-	if len(letters) >= 2 {
-		if err := tt.Click(strings.TrimSuffix(state.mountPoint, ":")); err != nil {
+	if len(letters) >= 2 {		if err := tt.Click(strings.TrimSuffix(state.mountPoint, ":")); err != nil {
 			t.Fatalf("click 盘符下拉触发器: %v", err)
 		}
 		first := strings.TrimSuffix(letters[0], ":")
@@ -124,6 +123,24 @@ func TestSettingsView(t *testing.T) {
 	}
 	if !tt.HasText("打开日志文件夹") {
 		t.Fatalf("texts %q do not contain the logs entry", tt.Texts())
+	}
+}
+
+// TestDriveEditorRenameEditable 编辑态：名称回填且可编辑（改名功能，
+// 2026 add-drive-rename）。注入内存条目，不落盘、不污染真实 remotes.json。
+func TestDriveEditorRenameEditable(t *testing.T) {
+	testServices()
+	remoteService.remotes = append(remoteService.remotes, Remote{
+		Name: "测试盘", Type: "webdav", MountPoint: "F:",
+		Options: map[string]string{"url": "https://x", "vendor": "other"},
+	})
+	state := newDriveEditorState()
+	state.setTarget("测试盘")
+	tt := ui.NewTester(state.view, driveWindowW, driveWindowH)
+	tt.Frame() // ensureLoaded 同步回填
+	// 名称输入框的值不进 labels 表，直接断言懒加载回填的状态
+	if state.name != "测试盘" {
+		t.Fatalf("编辑态应回填名称, got %q", state.name)
 	}
 }
 

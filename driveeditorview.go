@@ -554,17 +554,18 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 	})
 }
 
-// nameField 名称输入（编辑模式只读，对应旧 data-disabled=editing）。
+// nameField 名称输入：编辑模式同样可改（保存时按旧名定位，改名会同步
+// 迁移 rclone 配置节与本地记录，见 RemoteService.Update）。
 func (s *driveEditorState) nameField(c *ui.Context, t *ui.Theme) {
 	ui.Column(c).Gap(4).Children(func() {
 		label := ui.Text(c, "名称").FontSize(t.FontSize - 1).TextColor(t.TextMuted)
 		if s.editing() {
-			label.Tooltip("编辑模式下名称不可修改。")
+			label.Tooltip("修改名称将同步更新连接配置与本地记录。")
 		}
 		if s.invalid["__name"] {
 			label.TextColor(t.Danger)
 		}
-		ui.TextInput(c, &s.name).Label("名称").Placeholder("我的网盘").FillWidth().Disabled(s.editing())
+		ui.TextInput(c, &s.name).Label("名称").Placeholder("我的网盘").FillWidth()
 		if s.invalid["__name"] {
 			ui.Text(c, "请输入驱动器名称。").FontSize(t.FontSize - 2).TextColor(t.Danger)
 		}
@@ -812,7 +813,7 @@ func (s *driveEditorState) buildRemote() Remote {
 
 func (s *driveEditorState) persist() error {
 	if s.editing() {
-		return remoteService.Update(s.buildRemote())
+		return remoteService.Update(s.editName, s.buildRemote())
 	}
 	return remoteService.Create(s.buildRemote())
 }

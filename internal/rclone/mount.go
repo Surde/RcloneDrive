@@ -167,9 +167,6 @@ func (m *MountManager) Mount(remote, target string, readOnly, insecure bool) err
 	if mountFn == nil {
 		return errors.New("当前构建未启用挂载功能：请使用 -tags cmount 构建，并在 Windows 上安装 WinFsp")
 	}
-	if err := Ensure(); err != nil {
-		return err
-	}
 	if strings.TrimSpace(target) == "" {
 		return errors.New("挂载点不能为空")
 	}

@@ -530,38 +530,33 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 		})
 
 		// 显示容量：后端报不出容量时（如 WebDAV 无 quota），资源管理器会显示
-		// rclone 的 1 PiB 占位值（"1.00 PB 可用"），这里手动指定一个合理总量
-		ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
-			ui.Column(c).Gap(4).Width(90).Children(func() {
-				ui.Text(c, "显示容量").FontSize(t.FontSize - 1).TextColor(t.TextMuted).
-					Tooltip("驱动器属性中显示的总容量。选\"自动\"时探测后端真实容量；后端不报告容量（如部分 WebDAV 服务器）会显示 1 PB 占位值，此时可手动指定")
-			})
-			ui.Column(c).Gap(4).Width(120).Children(func() {
+		// rclone 的 1 PiB 占位值（"1.00 PB 可用"），这里手动指定一个合理总量。
+		// 布局与表单其他行一致：label 在上、控件在下（水平 label 列会留大空隙）
+		ui.Column(c).Gap(4).FillWidth().Children(func() {
+			ui.Text(c, "显示容量").FontSize(t.FontSize - 1).TextColor(t.TextMuted).
+				Tooltip("驱动器属性中显示的总容量。选\"自动\"时探测后端真实容量；后端不报告容量（如部分 WebDAV 服务器）会显示 1 PB 占位值，此时可手动指定")
+			ui.Column(c).Width(160).Children(func() {
 				selectLabeled(c, t, &s.diskTotal,
 					[]string{"自动", "512 GB", "1 TB", "2 TB", "4 TB", "8 TB", "16 TB"},
 					[]string{"", "512GiB", "1TiB", "2TiB", "4TiB", "8TiB", "16TiB"}, "")
 			})
 		})
 
-		// 远程路径：后端没有 root 配置项时（如 smb）才显示——有 root 项的
-		// 后端用既有高级字段即可。smb 场景叫"共享名"，填写后挂载点直接是
-		// 该共享内容且容量为真实值
+		// 共享路径 / 远程路径：后端没有 root 配置项时（如 smb）才显示——有
+		// root 项的后端用既有高级字段即可。填写后挂载点直接是该路径内容
+		// 且容量为真实值；路径支持共享内子目录（name:share/sub 语法）
 		if s.findField("root") == nil {
-			ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
-				label := "远程路径"
-				placeholder := "可选，如 folder/sub"
-				tooltip := "留空挂载远程根目录；填写远程子路径后，驱动器直接是该子目录的内容。"
-				if s.selectedType == "smb" {
-					label = "共享名"
-					placeholder = "可选，如 backup"
-					tooltip = "填写 NAS 上的共享名（如 backup）后，驱动器直接是该共享的内容，容量显示为真实值；留空则显示全部共享文件夹，容量为虚拟占位值。"
-				}
-				ui.Column(c).Gap(4).Width(90).Children(func() {
-					ui.Text(c, label).FontSize(t.FontSize - 1).TextColor(t.TextMuted).Tooltip(tooltip)
-				})
-				ui.Column(c).Gap(4).Grow(1).Children(func() {
-					ui.TextInput(c, &s.remotePath).Label(label).Placeholder(placeholder).FillWidth().Tooltip(tooltip)
-				})
+			label := "远程路径"
+			placeholder := "可选，如 folder/sub"
+			tooltip := "留空挂载远程根目录；填写远程子路径后，驱动器直接是该子目录的内容，容量显示为真实值。"
+			if s.selectedType == "smb" {
+				label = "共享路径"
+				placeholder = "可选，如 backup 或 backup/照片"
+				tooltip = "填写 NAS 上的共享或共享内路径（如 backup 或 backup/照片）后，驱动器直接是该路径的内容，容量显示为真实值；留空则显示全部共享文件夹，容量为虚拟占位值。"
+			}
+			ui.Column(c).Gap(4).FillWidth().Children(func() {
+				ui.Text(c, label).FontSize(t.FontSize - 1).TextColor(t.TextMuted).Tooltip(tooltip)
+				ui.TextInput(c, &s.remotePath).Label(label).Placeholder(placeholder).FillWidth().Tooltip(tooltip)
 			})
 		}
 

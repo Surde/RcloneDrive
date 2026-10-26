@@ -37,10 +37,12 @@
 - **选择**：`MountOptions` 新增 `RemotePath` 字段，`MountManager.Mount` 内部经 `mountFsPath(name, subpath)` 组装实际挂载路径；状态索引（`m.mounts`/`failedLogs`/统计分组）仍按驱动器名 `remote`。首参数同时承担"状态键"与"fs 路径"两个职责，若由调用方拼好传入会把两者耦死（`IsMounted("back")` 将查不到 `back:backup`），故拼接收进执行层、键与路径解耦。
 - 容量探测（`diskTotalOverride`）作用于 `fs.NewFs(name:path)` 返回的 Fs，自动命中实际路径，无需额外处理。
 
-### D4 UI 提示明确化
+### D4 UI 提示明确化与布局一致
 
-- 字段标签：Windows/Linux/macOS 统一"远程路径"；SMB 类型时标签"共享名"并带 tooltip："填写 NAS 上的共享名（如 backup）后，驱动器直接是该共享的内容，容量显示为真实值；留空则显示全部共享文件夹，容量为虚拟占位值。"
-- 输入框仅在 smb 类型显示还是全类型显示？——全类型通用字段（sftp/webdav 挂子目录同样有意义），但为避免表单拥挤，仅当后端**没有** root 配置项时显示（smb 是当前唯一命中项；有 root 项的后端用既有高级字段即可）。判断方式：`s.findField("root") == nil` 时显示。
+- 布局与表单其他行一致（label 在上、控件在下）：水平 label 列 + 固定 90px 宽会在短标签后留大空隙、控件左缘与全宽输入框不对齐（2026-10 验收反馈）。显示容量下拉固定 160px；共享路径输入框 FillWidth。
+- 字段标签：SMB 类型显示"共享路径"（支持共享内子目录，如 `backup/照片`），其余后端显示"远程路径"。
+- tooltip 给出示例并说明行为差异（SMB）："填写 NAS 上的共享或共享内路径（如 backup 或 backup/照片）后，驱动器直接是该路径的内容，容量显示为真实值；留空则显示全部共享文件夹，容量为虚拟占位值。"
+- 显示条件：仅当后端**没有** root 配置项时显示（smb 是当前唯一命中项；有 root 项的后端用既有高级字段即可）。判断方式：`s.findField("root") == nil` 时显示。
 
 ### D5 fillFrom 失败关窗
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,12 +11,14 @@ import (
 )
 
 // 视图冒烟测试：ui.Tester 在无窗口环境下渲染视图、读文本、模拟点击。
-// 服务使用真实实现（RemoteService 读测试机的 remotes.json，通常为空列表；
-// 不写配置、不做网络操作），覆盖三个窗口的关键渲染路径。
+// 服务与 rclone 配置由 TestMain 统一隔离到临时目录（testRoot），不读写
+// 真实用户配置、不弹系统通知，覆盖各窗口的关键渲染路径。
 
 func testServices() {
 	mountManager = rclone.NewMountManager()
 	remoteService = NewRemoteService(mountManager)
+	// 元数据指向 TestMain 的隔离目录（NewRemoteService 默认用真实用户目录）
+	remoteService.metaPath = filepath.Join(testRoot, "remotes.json")
 	mountService = NewMountService(remoteService, mountManager)
 	systemService = &SystemService{}
 	settingsService = &SettingsService{}
@@ -170,26 +173,36 @@ func TestDriveEditorDiskTotal(t *testing.T) {
 	}
 }
 
-// TestDriveEditorRemotePath SMB 共享名输入：界面渲染 + 编辑态回填 + 保存携带
-// （2026-10 SMB 共享挂载修复：后端无 root 配置项时显示"共享名/远程路径"）。
+// TestDriveEditorRemotePath SMB 共享路径输入：界面渲染 + 编辑态回填 + 保存携带
+// （2026-10 SMB 共享挂载修复：后端无 root 配置项时显示"共享路径/远程路径"）。
 func TestDriveEditorRemotePath(t *testing.T) {
 	testServices()
+	// 写入真实的 rclone 配置节，让编辑窗的配置回读（Options）完整走通
+	if err := rclone.SaveRemote("SMB盘", "smb", map[string]string{
+		"host": "192.168.9.30", "user": "nf", "pass": "secret",
+	}); err != nil {
+		t.Fatalf("SaveRemote: %v", err)
+	}
 	remoteService.remotes = append(remoteService.remotes, Remote{
-		Name: "SMB盘", Type: "smb", MountPoint: "K:", RemotePath: "backup",
+		Name: "SMB盘", Type: "smb", MountPoint: "K:", RemotePath: "backup/照片",
 		Options: map[string]string{"host": "192.168.9.30", "user": "nf"},
 	})
 	state := newDriveEditorState()
 	state.setTarget("SMB盘")
 	tt := ui.NewTester(state.view, driveWindowW, driveWindowH)
 	tt.Frame() // ensureLoaded 同步回填
-	if !tt.HasText("共享名") {
-		t.Fatalf("smb 类型应显示共享名输入, texts %q", tt.Texts())
+	if !tt.HasText("共享路径") {
+		t.Fatalf("smb 类型应显示共享路径输入, texts %q", tt.Texts())
 	}
-	if state.remotePath != "backup" {
-		t.Fatalf("编辑态应回填共享名, got %q", state.remotePath)
+	if state.remotePath != "backup/照片" {
+		t.Fatalf("编辑态应回填共享路径, got %q", state.remotePath)
 	}
-	if got := state.buildRemote().RemotePath; got != "backup" {
-		t.Fatalf("保存应携带共享名, got %q", got)
+	if got := state.buildRemote().RemotePath; got != "backup/照片" {
+		t.Fatalf("保存应携带共享路径, got %q", got)
+	}
+	// 配置回读应把 host 填回表单选项（凭据从 rclone.conf 解密回读）
+	if host := state.options["host"]; host != "192.168.9.30" {
+		t.Fatalf("配置回读应回填 host, got %q", host)
 	}
 }
 

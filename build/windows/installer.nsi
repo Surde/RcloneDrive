@@ -29,7 +29,10 @@ BrandingText " "
 
 !define MUI_ICON "${ROOT}\build\windows\appicon.ico"
 !define MUI_UNICON "${ROOT}\build\windows\appicon.ico"
-!define MUI_FINISHPAGE_RUN "$INSTDIR\RcloneDrive.exe"
+; 完成页"运行"走 LaunchUnelevated：安装器是管理员级，直接 Exec 会让应用
+; 继承提权 token，而提权进程挂载的盘符对桌面（非提权）会话不可见。
+!define MUI_FINISHPAGE_RUN
+!define MUI_FINISHPAGE_RUN_FUNCTION "LaunchUnelevated"
 !define MUI_FINISHPAGE_SHOWREADME
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "创建桌面快捷方式"
 !define MUI_FINISHPAGE_SHOWREADME_FUNCTION CreateDesktopShortcut
@@ -96,6 +99,13 @@ SectionEnd
 
 Function CreateDesktopShortcut
   CreateShortCut "$DESKTOP\RcloneDrive.lnk" "$INSTDIR\RcloneDrive.exe"
+FunctionEnd
+
+; 经 explorer 中转降权启动：explorer 以桌面会话（非提权）token 拉起应用后退出。
+; 已知限制：explorer 未运行的极简环境（Server Core）拉不起应用，此时用户可
+; 手动双击快捷方式启动。
+Function LaunchUnelevated
+  Exec 'explorer.exe "$INSTDIR\RcloneDrive.exe"'
 FunctionEnd
 
 ; Explorer 会在快捷方式出现后几秒才打开它，删除需重试。

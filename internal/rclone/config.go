@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/rclone/rclone/fs"
+	fslog "github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configfile"
 	"github.com/rclone/rclone/fs/config/obscure"
@@ -26,6 +28,47 @@ func ConfigDir() string {
 // ConfigPath 返回 rclone.conf 的完整路径。
 func ConfigPath() string {
 	return filepath.Join(ConfigDir(), "rclone.conf")
+}
+
+// 日志轮转参数：单文件 5MiB、保留 3 份并压缩，磁盘占用有界（约 20MiB）。
+const (
+	logMaxSizeBytes = 5 * 1024 * 1024
+	logMaxBackups   = 3
+)
+
+// LogsDir 返回日志目录（<ConfigDir>/logs），不存在时创建。
+func LogsDir() (string, error) {
+	return logsDirAt(ConfigDir())
+}
+
+func logsDirAt(configRoot string) (string, error) {
+	dir := filepath.Join(configRoot, "logs")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("创建日志目录失败: %w", err)
+	}
+	return dir, nil
+}
+
+// SetupLogging 把应用与内嵌 rclone 的日志统一写入 <ConfigDir>/logs/rclonedrive.log
+// （rclone 内置 lumberjack 轮转）。InitLogging 会 slog.SetDefault，标准库 log 的
+// 输出同样进该文件——生产构建 -H=windowsgui 无控制台，这是唯一的日志出口。
+// 应在 main 最早期调用，之后的日志才不丢。
+func SetupLogging() error {
+	return setupLoggingAt(ConfigDir())
+}
+
+func setupLoggingAt(configRoot string) error {
+	dir, err := logsDirAt(configRoot)
+	if err != nil {
+		return err
+	}
+	fslog.Opt.File = filepath.Join(dir, "rclonedrive.log")
+	// MaxSize 单位是字节（InitLogging 内部换算为 MiB）；<=0 表示追加不轮转
+	fslog.Opt.MaxSize = fs.SizeSuffix(logMaxSizeBytes)
+	fslog.Opt.MaxBackups = logMaxBackups
+	fslog.Opt.Compress = true
+	fslog.InitLogging()
+	return nil
 }
 
 var (

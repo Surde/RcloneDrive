@@ -82,14 +82,27 @@ type mountEntry struct {
 
 // MountManager 基于内嵌的 rclone mountlib 管理挂载的生命周期。
 type MountManager struct {
-	mu        sync.Mutex
-	mounts    map[string]*mountEntry
-	observers []func(name string, mounted bool, errMsg string)
+	mu sync.Mutex
+	mounts     map[string]*mountEntry
+	// failedLogs 保留最近一次挂载失败的过程日志（成功路径在 mounts 里），
+	// 否则失败瞬间日志随局部变量丢弃，界面无从排查
+	failedLogs map[string]*logBuffer
+	observers  []func(name string, mounted bool, errMsg string)
 }
 
 // NewMountManager 创建挂载管理器。
 func NewMountManager() *MountManager {
-	return &MountManager{mounts: make(map[string]*mountEntry)}
+	return &MountManager{
+		mounts:     make(map[string]*mountEntry),
+		failedLogs: make(map[string]*logBuffer),
+	}
+}
+
+// clearFailedLog 清除指定远程的上一轮挂载失败日志（重新发起挂载时调用）。
+func (m *MountManager) clearFailedLog(remote string) {
+	m.mu.Lock()
+	delete(m.failedLogs, remote)
+	m.mu.Unlock()
 }
 
 // MountType 返回当前构建可用的挂载实现（如 cmount）；无可用实现时返回空字符串。
@@ -163,6 +176,7 @@ func (m *MountManager) Mount(remote, target string, readOnly, insecure bool) err
 	if m.IsMounted(remote) {
 		return fmt.Errorf("%s 已挂载", remote)
 	}
+	m.clearFailedLog(remote)
 	if runtime.GOOS != "windows" {
 		if err := os.MkdirAll(target, 0o755); err != nil {
 			return fmt.Errorf("创建挂载目录失败: %w", err)
@@ -191,10 +205,16 @@ func (m *MountManager) Mount(remote, target string, readOnly, insecure bool) err
 	if _, err := point.Mount(); err != nil {
 		friendly := friendlyMountError(target, err)
 		fmt.Fprintf(log, "[%s] 挂载失败: %v\n", stamp(), err)
+		m.mu.Lock()
+		m.failedLogs[remote] = log
+		m.mu.Unlock()
 		return fmt.Errorf("挂载失败: %w", friendly)
 	}
 
 	if err := waitMountReady(point, log); err != nil {
+		m.mu.Lock()
+		m.failedLogs[remote] = log
+		m.mu.Unlock()
 		_ = point.Unmount()
 		return err
 	}
@@ -287,14 +307,19 @@ func (m *MountManager) ListMounted() []string {
 	return names
 }
 
-// Log 返回指定远程的挂载日志。
+// Log 返回指定远程的挂载日志：优先当前挂载，未挂载时返回最近一次失败的过程日志。
 func (m *MountManager) Log(remote string) string {
 	m.mu.Lock()
 	entry, ok := m.mounts[remote]
-	m.mu.Unlock()
 	if !ok {
-		return ""
+		failed, failedOk := m.failedLogs[remote]
+		m.mu.Unlock()
+		if !failedOk {
+			return ""
+		}
+		return failed.String()
 	}
+	m.mu.Unlock()
 	return entry.log.String()
 }
 

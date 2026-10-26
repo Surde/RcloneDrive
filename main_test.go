@@ -86,6 +86,14 @@ func TestSettingsView(t *testing.T) {
 	if !tt.HasText("当前版本") || !tt.HasText("检查更新") {
 		t.Fatalf("texts %q do not contain the update section", tt.Texts())
 	}
+
+	// 「启动」分区的日志入口：只验证渲染，不点击（点击会真实打开资源管理器）
+	if err := tt.Click("启动"); err != nil {
+		t.Fatalf("click 启动: %v", err)
+	}
+	if !tt.HasText("打开日志文件夹") {
+		t.Fatalf("texts %q do not contain the logs entry", tt.Texts())
+	}
 }
 
 // TestFormatters 数值格式化与旧前端 lib/format.ts 对齐。

@@ -179,13 +179,13 @@ func TestDriveEditorRemotePath(t *testing.T) {
 	testServices()
 	// 写入真实的 rclone 配置节，让编辑窗的配置回读（Options）完整走通
 	if err := rclone.SaveRemote("SMB盘", "smb", map[string]string{
-		"host": "192.168.9.30", "user": "nf", "pass": "secret",
+		"host": "192.0.2.10", "user": "demo", "pass": "secret",
 	}); err != nil {
 		t.Fatalf("SaveRemote: %v", err)
 	}
 	remoteService.remotes = append(remoteService.remotes, Remote{
 		Name: "SMB盘", Type: "smb", MountPoint: "K:", RemotePath: "backup/照片",
-		Options: map[string]string{"host": "192.168.9.30", "user": "nf"},
+		Options: map[string]string{"host": "192.0.2.10", "user": "demo"},
 	})
 	state := newDriveEditorState()
 	state.setTarget("SMB盘")
@@ -201,7 +201,7 @@ func TestDriveEditorRemotePath(t *testing.T) {
 		t.Fatalf("保存应携带共享路径, got %q", got)
 	}
 	// 配置回读应把 host 填回表单选项（凭据从 rclone.conf 解密回读）
-	if host := state.options["host"]; host != "192.168.9.30" {
+	if host := state.options["host"]; host != "192.0.2.10" {
 		t.Fatalf("配置回读应回填 host, got %q", host)
 	}
 }

@@ -50,6 +50,12 @@ Function .onInit
 FunctionEnd
 
 Section "RcloneDrive" SEC_APP
+  ; 覆盖安装/升级前结束运行中的实例，否则 exe 文件锁导致写入失败
+  ; （Abort/Retry/Ignore 弹窗）。/F 必须带：应用关闭窗口是隐藏到托盘，
+  ; 不带 /F 的 taskkill 只发 WM_CLOSE，会被 OnClose 拦截成隐藏。
+  ; 强杀跳过挂载清理：WinFsp 卷随进程死亡自动卸载，重启应用后自动重连。
+  ExecWait 'taskkill /IM RcloneDrive.exe /F'
+  Sleep 500 ; 等系统释放文件句柄
   SetOutPath "$INSTDIR"
   ; 暂存目录里可能留有本安装器自身的旧产物（RcloneDrive Setup*.exe），排除
   File /r /x "RcloneDrive Setup*.exe" "${STAGE}\*.*"
@@ -127,6 +133,9 @@ Function un.DeleteShortcut
 FunctionEnd
 
 Section "Uninstall"
+  ; 结束运行中的实例，否则 exe 文件锁导致删除失败（同安装 Section）
+  ExecWait 'taskkill /IM RcloneDrive.exe /F'
+  Sleep 500
   Push "$SMPROGRAMS\RcloneDrive.lnk"
   Call un.DeleteShortcut
   Push "$DESKTOP\RcloneDrive.lnk"

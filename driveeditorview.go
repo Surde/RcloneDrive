@@ -41,7 +41,8 @@ type driveEditorState struct {
 	autoConnect bool
 	readOnly    bool
 	insecure    bool
-	autoOpen    bool // 连接成功后自动打开挂载文件夹
+	diskTotal   string // 手动配置的显示容量（如 "2TiB"），空 = 自动探测
+	autoOpen    bool   // 连接成功后自动打开挂载文件夹
 	options     map[string]string
 	invalid     map[string]bool
 	tab         int
@@ -251,6 +252,7 @@ func (s *driveEditorState) resetForm() {
 	s.name = ""
 	s.mountPoint = s.defaultMountPoint
 	s.autoConnect, s.readOnly, s.insecure, s.autoOpen = false, false, false, false
+	s.diskTotal = ""
 	s.invalid = make(map[string]bool)
 	s.seedOptions(false)
 	// 默认盘符可能被其他驱动器占用，落到第一个可用项
@@ -273,6 +275,7 @@ func (s *driveEditorState) fillFrom(remote Remote) {
 	s.autoConnect = remote.AutoConnect
 	s.readOnly = remote.ReadOnly
 	s.insecure = remote.Insecure
+	s.diskTotal = remote.DiskTotal
 	s.autoOpen = remote.AutoOpen
 	s.invalid = make(map[string]bool)
 	s.seedOptions(false)
@@ -516,6 +519,20 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 					})
 				}
 			}
+		})
+
+		// 显示容量：后端报不出容量时（如 WebDAV 无 quota），资源管理器会显示
+		// rclone 的 1 PiB 占位值（"1.00 PB 可用"），这里手动指定一个合理总量
+		ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
+			ui.Column(c).Gap(4).Width(90).Children(func() {
+				ui.Text(c, "显示容量").FontSize(t.FontSize - 1).TextColor(t.TextMuted).
+					Tooltip("驱动器属性中显示的总容量。选\"自动\"时探测后端真实容量；后端不报告容量（如部分 WebDAV 服务器）会显示 1 PB 占位值，此时可手动指定")
+			})
+			ui.Column(c).Gap(4).Width(120).Children(func() {
+				selectLabeled(c, t, &s.diskTotal,
+					[]string{"自动", "512 GB", "1 TB", "2 TB", "4 TB", "8 TB", "16 TB"},
+					[]string{"", "512GiB", "1TiB", "2TiB", "4TiB", "8TiB", "16TiB"}, "")
+			})
 		})
 
 		// 开关组：自动连接 / 只读模式 / 忽略证书错误 / 连接时自动打开
@@ -806,6 +823,7 @@ func (s *driveEditorState) buildRemote() Remote {
 		AutoConnect: s.autoConnect,
 		ReadOnly:    s.readOnly,
 		Insecure:    s.insecure,
+		DiskTotal:   s.diskTotal,
 		AutoOpen:    s.autoOpen,
 		Options:     opts,
 	}

@@ -160,15 +160,24 @@ func certHint(err error) error {
 	return fmt.Errorf("%w（若服务端使用自签名证书，请在编辑驱动器时勾选「忽略证书错误」）", err)
 }
 
+// MountOptions 是挂载的可选项。
+type MountOptions struct {
+	ReadOnly bool
+	// Insecure 跳过 TLS 证书校验（自签名证书的自建服务器用）
+	Insecure bool
+	// DiskTotal 手动配置的显示容量（如 "2TiB"）；空表示自动探测：
+	// 后端报告了真实容量就用真实值，否则按 virtualDiskTotalBytes 显示
+	DiskTotal string
+}
+
 // Mount 在当前进程中把远程存储挂载到 target（Windows 为盘符，如 "Z:"）。
-// insecure 为 true 时该挂载跳过 TLS 证书校验（自签名证书的自建服务器用）。
-func (m *MountManager) Mount(remote, target string, readOnly, insecure bool) error {
+func (m *MountManager) Mount(remote, target string, opt MountOptions) error {
 	mountType, mountFn := mountlib.ResolveMountMethod("")
 	if mountFn == nil {
 		return errors.New("当前构建未启用挂载功能：请使用 -tags cmount 构建，并在 Windows 上安装 WinFsp")
 	}
-	if strings.TrimSpace(target) == "" {
-		return errors.New("挂载点不能为空")
+	if err := Ensure(); err != nil {
+		return err
 	}
 	if m.IsMounted(remote) {
 		return fmt.Errorf("%s 已挂载", remote)
@@ -180,22 +189,25 @@ func (m *MountManager) Mount(remote, target string, readOnly, insecure bool) err
 		}
 	}
 
-	f, err := fs.NewFs(ConfigCtx(context.Background(), insecure), remote+":")
+	f, err := fs.NewFs(ConfigCtx(context.Background(), opt.Insecure), remote+":")
 	if err != nil {
 		return fmt.Errorf("打开远程存储失败: %w", err)
 	}
 
 	vfsOpt := vfscommon.Opt
 	vfsOpt.CacheMode = vfscommon.CacheModeWrites
-	vfsOpt.ReadOnly = readOnly
+	vfsOpt.ReadOnly = opt.ReadOnly
+	// 服务器不报告容量（如 WebDAV 无 quota）时 rclone 会用 1 PiB 占位
+	// （Windows 显示"1.00 PB 可用"），改为上报合理的虚拟总量或手动配置值
+	vfsOpt.DiskSpaceTotalSize = diskTotalOverride(f.Features().About, parseDiskTotal(opt.DiskTotal))
 	mountOpt := mountlib.Opt
 	mountOpt.VolumeName = remote
 
 	log := newLogBuffer()
-	fmt.Fprintf(log, "[%s] 使用 %s 挂载 %s -> %s (只读=%v, 忽略证书错误=%v)\n", stamp(), mountType, remote, target, readOnly, insecure)
+	fmt.Fprintf(log, "[%s] 使用 %s 挂载 %s -> %s (只读=%v, 忽略证书错误=%v)\n", stamp(), mountType, remote, target, opt.ReadOnly, opt.Insecure)
 
 	// 该驱动器的统计分组：写入路径（operations.Rcat）按 ctx 记账，用于读取写入速率
-	statsCtx := accounting.WithStatsGroup(ConfigCtx(context.Background(), insecure), remote)
+	statsCtx := accounting.WithStatsGroup(ConfigCtx(context.Background(), opt.Insecure), remote)
 
 	point := mountlib.NewMountPoint(mountFn, target, f, &mountOpt, &vfsOpt)
 	point.Ctx = statsCtx
@@ -269,6 +281,44 @@ func mountPath(target string) string {
 		return target + `\`
 	}
 	return target
+}
+
+// virtualDiskTotalBytes 是后端拿不到容量时的虚拟总量（2 TiB）。
+// rclone 对缺失的容量值填 1 PiB 占位（Windows 显示"1.00 PB 可用"），
+// 上报一个合理值更可信；free 由 rclone 按 total-used 推得。
+const virtualDiskTotalBytes = fs.SizeSuffix(2 << 40)
+
+// parseDiskTotal 解析手动配置的显示容量（如 "2TiB"）；空或非法返回 0（自动）。
+func parseDiskTotal(s string) fs.SizeSuffix {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	var size fs.SizeSuffix
+	if err := size.Set(s); err != nil {
+		fs.Logf(nil, "显示容量 %q 解析失败，改为自动探测: %v", s, err)
+		return 0
+	}
+	return size
+}
+
+// diskTotalOverride 返回 vfs DiskSpaceTotalSize 的取值：手动配置优先；
+// 自动模式下探测后端容量，拿不到真实 Total（后端不支持 About、请求失败
+// 或不返回 quota）时返回虚拟总量，拿得到则返回 -1（不干预 rclone 真实值）。
+func diskTotalOverride(about func(context.Context) (*fs.Usage, error), manual fs.SizeSuffix) fs.SizeSuffix {
+	if manual > 0 {
+		return manual
+	}
+	if about == nil {
+		return virtualDiskTotalBytes
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), usageTimeout)
+	defer cancel()
+	usage, err := about(ctx)
+	if err != nil || usage == nil || usage.Total == nil {
+		return virtualDiskTotalBytes
+	}
+	return -1
 }
 
 // Unmount 卸载指定远程，等待其挂载循环退出。

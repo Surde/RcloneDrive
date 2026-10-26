@@ -26,6 +26,8 @@ type Remote struct {
 	ReadOnly    bool   `json:"readOnly"`
 	// Insecure 为 true 时该驱动器的挂载跳过 TLS 证书校验（自签名证书用）
 	Insecure bool `json:"insecure"`
+	// DiskTotal 手动配置的显示容量（如 "2TiB"）；空表示自动探测后端容量
+	DiskTotal string `json:"diskTotal,omitempty"`
 	// AutoOpen 连接成功后自动打开挂载文件夹（仅手动连接触发，开机自动连接不触发）
 	AutoOpen bool              `json:"autoOpen"`
 	Options  map[string]string `json:"options,omitempty"`

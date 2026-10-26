@@ -144,6 +144,32 @@ func TestDriveEditorRenameEditable(t *testing.T) {
 	}
 }
 
+// TestDriveEditorDiskTotal 显示容量：界面渲染 + 编辑态回填 + 保存携带（
+// 2026-10 容量显示修复：后端不报告容量时手动指定驱动器显示总量）。
+func TestDriveEditorDiskTotal(t *testing.T) {
+	testServices()
+	remoteService.remotes = append(remoteService.remotes, Remote{
+		Name: "容量盘", Type: "webdav", MountPoint: "F:", DiskTotal: "2TiB",
+		Options: map[string]string{"url": "https://x", "vendor": "other"},
+	})
+	state := newDriveEditorState()
+	tt := ui.NewTester(state.view, driveWindowW, driveWindowH)
+	if !tt.HasText("显示容量") {
+		t.Fatalf("texts %q do not contain 显示容量", tt.Texts())
+	}
+	if state.diskTotal != "" {
+		t.Fatalf("新增态显示容量应为空(自动), got %q", state.diskTotal)
+	}
+	state.setTarget("容量盘")
+	tt.Frame() // ensureLoaded 同步回填
+	if state.diskTotal != "2TiB" {
+		t.Fatalf("编辑态应回填显示容量, got %q", state.diskTotal)
+	}
+	if got := state.buildRemote().DiskTotal; got != "2TiB" {
+		t.Fatalf("保存应携带显示容量, got %q", got)
+	}
+}
+
 // TestFormatters 数值格式化与旧前端 lib/format.ts 对齐。
 func TestFormatters(t *testing.T) {
 	sizeCases := []struct {

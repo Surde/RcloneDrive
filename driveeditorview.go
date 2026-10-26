@@ -41,8 +41,9 @@ type driveEditorState struct {
 	autoConnect bool
 	readOnly    bool
 	insecure    bool
-	diskTotal   string // 手动配置的显示容量（如 "2TiB"），空 = 自动探测
-	autoOpen    bool   // 连接成功后自动打开挂载文件夹
+	diskTotal   string     // 手动配置的显示容量（如 "2TiB"），空 = 自动探测
+	remotePath  string     // 远程子路径（SMB 场景为共享名），空 = 挂远程根
+	autoOpen    bool       // 连接成功后自动打开挂载文件夹
 	options     map[string]string
 	invalid     map[string]bool
 	tab         int
@@ -253,6 +254,7 @@ func (s *driveEditorState) resetForm() {
 	s.mountPoint = s.defaultMountPoint
 	s.autoConnect, s.readOnly, s.insecure, s.autoOpen = false, false, false, false
 	s.diskTotal = ""
+	s.remotePath = ""
 	s.invalid = make(map[string]bool)
 	s.seedOptions(false)
 	// 默认盘符可能被其他驱动器占用，落到第一个可用项
@@ -276,6 +278,7 @@ func (s *driveEditorState) fillFrom(remote Remote) {
 	s.readOnly = remote.ReadOnly
 	s.insecure = remote.Insecure
 	s.diskTotal = remote.DiskTotal
+	s.remotePath = remote.RemotePath
 	s.autoOpen = remote.AutoOpen
 	s.invalid = make(map[string]bool)
 	s.seedOptions(false)
@@ -283,6 +286,11 @@ func (s *driveEditorState) fillFrom(remote Remote) {
 	stored, err := remoteService.Options(remote.Name)
 	if err != nil {
 		notifyUserTo(driveWindowName, "error", "读取驱动器配置失败", err.Error())
+		// 元数据存在但配置节不在（孤儿条目等）：提示后关窗回列表，
+		// 不停留在一个无法回填的半初始化表单
+		if allWindows != nil {
+			allWindows.hide(driveWindowName)
+		}
 		return
 	}
 	for key, value := range stored {
@@ -534,6 +542,28 @@ func (s *driveEditorState) basicTab(c *ui.Context, t *ui.Theme, basic []rclone.F
 					[]string{"", "512GiB", "1TiB", "2TiB", "4TiB", "8TiB", "16TiB"}, "")
 			})
 		})
+
+		// 远程路径：后端没有 root 配置项时（如 smb）才显示——有 root 项的
+		// 后端用既有高级字段即可。smb 场景叫"共享名"，填写后挂载点直接是
+		// 该共享内容且容量为真实值
+		if s.findField("root") == nil {
+			ui.Row(c).Gap(8).AlignItems(ui.Start).Children(func() {
+				label := "远程路径"
+				placeholder := "可选，如 folder/sub"
+				tooltip := "留空挂载远程根目录；填写远程子路径后，驱动器直接是该子目录的内容。"
+				if s.selectedType == "smb" {
+					label = "共享名"
+					placeholder = "可选，如 backup"
+					tooltip = "填写 NAS 上的共享名（如 backup）后，驱动器直接是该共享的内容，容量显示为真实值；留空则显示全部共享文件夹，容量为虚拟占位值。"
+				}
+				ui.Column(c).Gap(4).Width(90).Children(func() {
+					ui.Text(c, label).FontSize(t.FontSize - 1).TextColor(t.TextMuted).Tooltip(tooltip)
+				})
+				ui.Column(c).Gap(4).Grow(1).Children(func() {
+					ui.TextInput(c, &s.remotePath).Label(label).Placeholder(placeholder).FillWidth().Tooltip(tooltip)
+				})
+			})
+		}
 
 		// 开关组：自动连接 / 只读模式 / 忽略证书错误 / 连接时自动打开
 		ui.Row(c).Gap(16).AlignItems(ui.Center).Wrap().Children(func() {
@@ -824,6 +854,7 @@ func (s *driveEditorState) buildRemote() Remote {
 		ReadOnly:    s.readOnly,
 		Insecure:    s.insecure,
 		DiskTotal:   s.diskTotal,
+		RemotePath:  strings.Trim(strings.TrimSpace(s.remotePath), "/"),
 		AutoOpen:    s.autoOpen,
 		Options:     opts,
 	}

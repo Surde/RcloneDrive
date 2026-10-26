@@ -134,9 +134,10 @@ func (s *MountService) mount(name string, allowAutoOpen bool) error {
 		}
 	}
 	if err := s.mounts.Mount(name, target, rclone.MountOptions{
-		ReadOnly:  remote.ReadOnly,
-		Insecure:  remote.Insecure,
-		DiskTotal: remote.DiskTotal,
+		ReadOnly:   remote.ReadOnly,
+		Insecure:   remote.Insecure,
+		DiskTotal:  remote.DiskTotal,
+		RemotePath: remote.RemotePath,
 	}); err != nil {
 		return err
 	}

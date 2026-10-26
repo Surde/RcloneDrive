@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -119,5 +120,98 @@ func TestUpdateSameName(t *testing.T) {
 	}
 	if opts["url"] != "https://new" {
 		t.Errorf("url = %q, want https://new", opts["url"])
+	}
+}
+
+// 孤儿条目自愈：remotes.json 有但 rclone.conf 没有的条目，加载时自动清理并写回。
+func TestLoadPrunesOrphans(t *testing.T) {
+	svc := useTestEnv(t)
+	if err := svc.Create(webdavRemote("A", "https://a")); err != nil {
+		t.Fatalf("Create A: %v", err)
+	}
+	// 模拟配置节被外部删改后遗留的元数据孤儿
+	svc.mu.Lock()
+	svc.remotes = append(svc.remotes, Remote{Name: "测试盘", Type: "webdav"})
+	svc.mu.Unlock()
+	if err := svc.save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// 重启视角：重新加载应清理孤儿、保留正常条目
+	svc2 := &RemoteService{metaPath: svc.metaPath, mounts: svc.mounts}
+	if err := svc2.load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := svc2.Get("测试盘"); ok {
+		t.Fatal("孤儿条目应被清理")
+	}
+	if _, ok := svc2.Get("A"); !ok {
+		t.Fatal("正常条目应保留")
+	}
+	if data := config.LoadedData(); !data.HasSection("A") {
+		t.Fatal("正常配置节应保留")
+	}
+	// 再次从盘上重读：孤儿已从文件移除（写回生效）
+	svc3 := &RemoteService{metaPath: svc.metaPath, mounts: svc.mounts}
+	if err := svc3.load(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if _, ok := svc3.Get("测试盘"); ok {
+		t.Fatal("写回后孤儿应已从文件移除")
+	}
+}
+
+// 配置完整时加载无副作用（不产生额外写回）。
+func TestLoadKeepsConsistentRemotes(t *testing.T) {
+	svc := useTestEnv(t)
+	if err := svc.Create(webdavRemote("A", "https://a")); err != nil {
+		t.Fatalf("Create A: %v", err)
+	}
+	before, err := os.Stat(svc.metaPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	svc2 := &RemoteService{metaPath: svc.metaPath, mounts: svc.mounts}
+	if err := svc2.load(); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	after, err := os.Stat(svc.metaPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("配置完整时加载不应写回元数据文件")
+	}
+}
+
+// Remote.RemotePath 的规范化与校验：合法值规范化保存，非法值拒绝。
+func TestRemotePathValidation(t *testing.T) {
+	svc := useTestEnv(t)
+	if err := svc.Create(webdavRemote("A", "https://a")); err != nil {
+		t.Fatalf("Create A: %v", err)
+	}
+
+	// 非法值被拒绝
+	for _, p := range []string{"a/../b", "..", "C:x", "a b", "a//b", "/../x"} {
+		remote := webdavRemote("A", "https://a")
+		remote.RemotePath = p
+		if err := svc.Update("A", remote); err == nil {
+			t.Errorf("远程路径 %q 应被拒绝", p)
+		}
+	}
+	// 拒绝后原值保持
+	if got, _ := svc.Get("A"); got.RemotePath != "" {
+		t.Errorf("被拒绝的保存不应留下 RemotePath, got %q", got.RemotePath)
+	}
+
+	// 合法值规范化（Trim 首尾 / 与空白）后保存
+	remote := webdavRemote("A", "https://a")
+	remote.RemotePath = " /backup/ "
+	if err := svc.Update("A", remote); err != nil {
+		t.Fatalf("Update remotePath: %v", err)
+	}
+	if got, _ := svc.Get("A"); got.RemotePath != "backup" {
+		t.Errorf("RemotePath = %q, want backup", got.RemotePath)
 	}
 }

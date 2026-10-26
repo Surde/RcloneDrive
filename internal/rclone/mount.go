@@ -168,6 +168,17 @@ type MountOptions struct {
 	// DiskTotal 手动配置的显示容量（如 "2TiB"）；空表示自动探测：
 	// 后端报告了真实容量就用真实值，否则按 virtualDiskTotalBytes 显示
 	DiskTotal string
+	// RemotePath 远程存储内的子路径（如 SMB 共享名）；空表示挂载远程根。
+	// 容量探测作用于该实际路径；挂载状态索引仍按驱动器名
+	RemotePath string
+}
+
+// mountFsPath 组装实际挂载的远程路径：name:path（子路径为空挂根）。
+func mountFsPath(name, subpath string) string {
+	if subpath == "" {
+		return name + ":"
+	}
+	return name + ":" + subpath
 }
 
 // Mount 在当前进程中把远程存储挂载到 target（Windows 为盘符，如 "Z:"）。
@@ -189,7 +200,9 @@ func (m *MountManager) Mount(remote, target string, opt MountOptions) error {
 		}
 	}
 
-	f, err := fs.NewFs(ConfigCtx(context.Background(), opt.Insecure), remote+":")
+	// 实际挂载 name:path（如 back:backup），驱动器状态仍按 name 索引
+	fsPath := mountFsPath(remote, opt.RemotePath)
+	f, err := fs.NewFs(ConfigCtx(context.Background(), opt.Insecure), fsPath)
 	if err != nil {
 		return fmt.Errorf("打开远程存储失败: %w", err)
 	}
@@ -204,7 +217,7 @@ func (m *MountManager) Mount(remote, target string, opt MountOptions) error {
 	mountOpt.VolumeName = remote
 
 	log := newLogBuffer()
-	fmt.Fprintf(log, "[%s] 使用 %s 挂载 %s -> %s (只读=%v, 忽略证书错误=%v)\n", stamp(), mountType, remote, target, opt.ReadOnly, opt.Insecure)
+	fmt.Fprintf(log, "[%s] 使用 %s 挂载 %s -> %s (只读=%v, 忽略证书错误=%v)\n", stamp(), mountType, fsPath, target, opt.ReadOnly, opt.Insecure)
 
 	// 该驱动器的统计分组：写入路径（operations.Rcat）按 ctx 记账，用于读取写入速率
 	statsCtx := accounting.WithStatsGroup(ConfigCtx(context.Background(), opt.Insecure), remote)

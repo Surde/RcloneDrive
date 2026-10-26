@@ -170,6 +170,29 @@ func TestDriveEditorDiskTotal(t *testing.T) {
 	}
 }
 
+// TestDriveEditorRemotePath SMB 共享名输入：界面渲染 + 编辑态回填 + 保存携带
+// （2026-10 SMB 共享挂载修复：后端无 root 配置项时显示"共享名/远程路径"）。
+func TestDriveEditorRemotePath(t *testing.T) {
+	testServices()
+	remoteService.remotes = append(remoteService.remotes, Remote{
+		Name: "SMB盘", Type: "smb", MountPoint: "K:", RemotePath: "backup",
+		Options: map[string]string{"host": "192.168.9.30", "user": "nf"},
+	})
+	state := newDriveEditorState()
+	state.setTarget("SMB盘")
+	tt := ui.NewTester(state.view, driveWindowW, driveWindowH)
+	tt.Frame() // ensureLoaded 同步回填
+	if !tt.HasText("共享名") {
+		t.Fatalf("smb 类型应显示共享名输入, texts %q", tt.Texts())
+	}
+	if state.remotePath != "backup" {
+		t.Fatalf("编辑态应回填共享名, got %q", state.remotePath)
+	}
+	if got := state.buildRemote().RemotePath; got != "backup" {
+		t.Fatalf("保存应携带共享名, got %q", got)
+	}
+}
+
 // TestFormatters 数值格式化与旧前端 lib/format.ts 对齐。
 func TestFormatters(t *testing.T) {
 	sizeCases := []struct {

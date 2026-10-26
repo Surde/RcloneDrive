@@ -133,6 +133,12 @@
   - **触发信号**：`task` 报 `template: :1: invalid syntax`。
   - **正确做法**：vars 里的 Windows 路径一律用正斜杠（`C:/Program Files (x86)/NSIS/makensis.exe`）。
   - **适用范围**：Taskfile.yml 所有模板表达式。
+- **标题**：headless 测试（go test）会真弹系统通知，且默认读写真实用户配置
+  - **触发信号**：跑 `go test` 时用户机器连弹"读取驱动器配置失败: 测试盘"等系统通知；测试行为随测试机真实配置变化。
+  - **根因/约束**：`notifyUserTo` 在无可见窗口时走 `notifyNative`（系统通知）——go test 进程没有窗口，全部通知都落到系统气泡；`testServices`/`NewRemoteService` 默认 metaPath 在真实 `%AppData%/RcloneDrive`，编辑窗回填还会经 `Ensure()` 把 rclone 配置钉到真实 rclone.conf。
+  - **正确做法**：主包 `TestMain` 统一隔离——`config.SetConfigPath` 指向临时目录、`remoteService.metaPath` 覆盖到临时目录、`notifyNativeFn` 替换为静默（notificationservice.go 的通知出口必须是可注入的 `notifyNativeFn`，不许直接调 `notifyNative`）；需要完整回填路径的测试用 `rclone.SaveRemote` 在隔离配置里建节。
+  - **验证方式**：跑全量 `go test ./...` 期间无系统通知弹出；测试后真实 remotes.json/rclone.conf 无测试条目（grep 测试名 0 命中）。
+  - **适用范围**：main 包全部测试、notificationservice.go、任何新增的"用户感知"出口（系统通知/托盘气泡等）。
 
 ## 编码与重构规范
 
